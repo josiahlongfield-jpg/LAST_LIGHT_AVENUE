@@ -10,6 +10,11 @@ The whole game ships as **one self-contained HTML file** with every model and so
 ## Modes
 - **Survival:** waves of AI soldiers. A 6-minute day/night cycle takes you from sunset through night (night-vision goggles on N, weapon torch on T). You can climb the fire escapes to the rooftops.
 - **Deathmatch · online:** free-for-all for up to 8 players on a room code. The match is first to 20 kills or 10 minutes, with respawns. Hold Tab for the scoreboard.
+- **Hunted:** the avenue's barricades come down and its cross streets run on into a grid city about 240 x 260 m (built the first time
+  the mode is picked). Find three radios (hold E for 6 s, which is loud), then hold out for 60 s at the evac flare until the helicopter comes.
+  Night falls about 20 s in. The horrors: **crawlers** (eyeless, on all fours, hunt by sound, lunge, climb up after you), **wailers** (crouched on
+  rooftop cornices; if one sees you it screams every crawler within 150 m onto you), **the Still** (a tall mannequin that comes out at night and
+  only moves while you aren't looking; the goggles flipping counts as a blink), and **the figure** (same rules as Survival, but its scare does 35 damage).
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
   have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
@@ -23,7 +28,7 @@ data/soldier_lp.json     Low-poly soldier used for enemies and other players (bu
 data/city_sounds.json    Every sound as base64 WAV (the editable audio master, ~20 MB)
 data/city_sounds_mp3.json  Same sounds as MP3, which is what the game actually inlines (built by tools/compress_sounds.py)
 tools/                   Python generators: models (knight.py, hd_lib.py, wlib.py, weapons_export.py, lp_soldier.py)
-                         and audio (real_sounds.py, asset_audio.py, horror_audio.py, compress_sounds.py)
+                         and audio (real_sounds.py, asset_audio.py, horror_audio.py, hunt_audio.py, compress_sounds.py)
 assets/wav, assets/wav2  Source recordings (openly licensed; credits are in the game's "Sound credits" panel)
 build.py                 Inlines data into the template -> dist/ and test/game.html, then syntax-checks the script with node
 test/run.py, run2.py     Headless Playwright drivers (single player / two players)
@@ -42,22 +47,28 @@ cd data && cp weapon_hd.base.json weapon_hd.json && python3 ../tools/weapons_exp
 ```
 Rebuilding sounds (only when you change the audio tools). Run from `data/`; needs numpy, scipy and ffmpeg with libmp3lame:
 ```
-cd data && python3 ../tools/asset_audio.py && python3 ../tools/horror_audio.py && python3 ../tools/compress_sounds.py
+cd data && python3 ../tools/asset_audio.py && python3 ../tools/horror_audio.py && python3 ../tools/hunt_audio.py && python3 ../tools/compress_sounds.py
 ```
 `real_sounds.py` (gun recordings) also writes into `city_sounds.json`; run it first if you change the guns.
 Every new sound needs a `GAIN` entry in the template, and a credit in the Sound credits panel if it comes from a new source.
 
 ## Template map (search for the `// ====` section headers)
-renderer/sky → materials → static batching → street layout → buildings (fire escapes, roofs) → vehicles → street furniture →
+renderer/sky → materials → static batching (+ layers) → street layout → buildings (fire escapes, roofs) → vehicles → street furniture →
 day/night + lamps + torch + night vision (NV post-process shader `nvMat`) → **the figure** (`FIG`, `buildFigureModel`, `poseFigure`,
 `updateFigure`) → player viewmodels (`WEAPONS`, `RIGS`, reload keyframes `ARMK`, `animateReload`, shotgun shells, pump, bolt, slide) →
 audio (`sfx`, positional `sfxAt` with HRTF, occlusion, reverb) → state (`P` player, `Wp` weapon) → collision → enemies (`makeBot`, `updateBot` AI)
-→ effects → HUD → menu/input/loadout → survival waves → climbing → weapon actions (`shoot`, `reload`) → main loop `step()` →
+→ effects → HUD → menu/input/loadout → survival waves → climbing → weapon actions (`shoot`, `reload`) →
+**Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`, `updateCrawler`/`updateStill`/`updateWailer`,
+radios/`EVAC`, `huntReset`, `updateHunt`) → main loop `step()` →
 **online deathmatch** (`NET`, transports, puppets, hits, match clock) → debug channel.
 
 Conventions:
 - Shared helpers: `rand`, `randi`, `clamp`, `lerp`, `damp(k, dt)`, `angDiff`, `pick`, `V3` (THREE.Vector3), `tmp`/`tmp2` scratch vectors.
 - Static scenery goes through `vis()/vbox()/vgeo()`, which batch it into one draw call per material. Colliders go through `solid()/proxy()`.
+- Layers: anything built inside `layerBuild(L, fn)` (batches, colliders, proxies, lamps) belongs to layer `L`, and `setLayer(L, on)` shows or
+  removes all of it. `AVE` holds the avenue-only barricades (off in Hunted); `CITY.layer` holds the city (on only in Hunted).
+- Hunted's horrors path-find with a flow field: `navFlow()` runs a breadth-first search out from the player over a 2 m grid a few times a
+  second, and `navDir()` tells a horror which neighbouring cell is closer to you.
 - Player yaw 0 looks down -Z. Bots and puppets face +Z at rotation 0, so a remote player's puppet uses `yaw + PI`.
 - Comments say *why*, briefly, in plain words.
 
@@ -77,7 +88,8 @@ Conventions:
 The page listens for `postMessage({dbg:'lla', id, cmd, ...args})` and replies `{dbg:'lla-r', id, r}` with a big state snapshot
 (player, weapon, bots, wave, tod, fig incl. `fig.net`, audio...). Commands: start, reset, set {pos,yaw,pitch,hp,difficulty}, sim {s}
 (advance s seconds at 60 fps without rendering), key {code,ms}, fire {n}, ads, look, ray, weapon, loadout, tune, tod {th}, nv, torch,
-climb, approach, audiotest, figD {D} (place the figure D metres away), forget, pause, norender {on}, net {code,name,color},
+climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {kind,D,state,mem,pose} (bring a crawler,
+wailer or still in D metres ahead), radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
 aimNet {i,head}, netClock {t}, leaveNet. `test/run.py` and `test/run2.py` wrap this.
 
 Testing tips:
