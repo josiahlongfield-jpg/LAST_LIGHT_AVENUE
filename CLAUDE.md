@@ -8,10 +8,11 @@ The whole game ships as **one self-contained HTML file** with every model and so
 - **Standalone copy:** `dist/last-light-avenue.html`. Double-click it to play. Online play doesn't work from this copy: it falls back to same-browser tabs only.
 
 ## Modes
-- **Survival:** waves of AI soldiers. A 12-minute day/night cycle takes you from sunset through night (night-vision goggles on N, weapon torch on T). You can climb the fire escapes to the rooftops.
+- **Survival:** waves of AI soldiers. A 6-minute day/night cycle takes you from sunset through night (night-vision goggles on N, weapon torch on T). You can climb the fire escapes to the rooftops.
 - **Deathmatch · online:** free-for-all for up to 8 players on a room code. The match is first to 20 kills or 10 minutes, with respawns. Hold Tab for the scoreboard.
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
-  If you leave the goggles on, it still closes in every 30 to 50 seconds (`FIG.stalkT`). During the scare it is pinned to your view (`pinFigure`).
+  It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
+  have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
 
 ## Layout
 ```

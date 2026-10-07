@@ -938,8 +938,8 @@ const SND = __SOUNDS__;
   for (const a of AMMO) { block(1.0, 0.5, 0.6, a.x, 0, a.z, M.ammo, { surface: 'wood' }); vbox(1.02, 0.06, 0.62, a.x, 0.44, a.z, M.sign, { cast: false }); vbox(0.25, 0.08, 0.05, a.x, 0.25, a.z + 0.31, mat(0xd9c55a, 0.6), { cast: false }); }
   flushBatches();
   // ================================================================ day / night cycle, street lamps, weapon torch, night vision
-  // the sun travels down the avenue: it rises behind your start, sets at the far end, and a full day takes 12 minutes
-  const TOD = { th: 0.2, speed: Math.PI * 2 / 720, dark: 0, sunW: 1, skyT: 0 };
+  // the sun travels down the avenue: it rises behind your start, sets at the far end, and a full day takes 6 minutes
+  const TOD = { th: 0.2, speed: Math.PI * 2 / 360, dark: 0, sunW: 1, skyT: 0 };
   const LIGHTDIR = new V3().copy(SUN);
   const col = h => new THREE.Color(h);
   const PAL = {
@@ -1061,11 +1061,11 @@ const SND = __SOUNDS__;
     return v;
   }
   // night vision (N): image intensifier, green phosphor, grain, tube vignette
-  const NV = { on: false, t: 0, rt: null, want: false };
+  const NV = { on: false, t: 0, rt: null, want: false, blindTold: false };
   const nvMat = new THREE.ShaderMaterial({
-    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGain: { value: 6 }, uNoise: { value: 0.16 }, uTear: { value: 0 }, uAspect: { value: 1.6 }, uPx: { value: new THREE.Vector2(1 / 1600, 1 / 900) } },
+    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGain: { value: 6 }, uNoise: { value: 0.16 }, uTear: { value: 0 }, uBlind: { value: 0 }, uAspect: { value: 1.6 }, uPx: { value: new THREE.Vector2(1 / 1600, 1 / 900) } },
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime, uGain, uAspect, uNoise, uTear; uniform vec2 uPx; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime, uGain, uAspect, uNoise, uTear, uBlind; uniform vec2 uPx; varying vec2 vUv;
       float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
       void main(){
@@ -1077,12 +1077,13 @@ const SND = __SOUNDS__;
         float l = lum(c) + max(0.0, b / 8.0 - 0.25) * 0.8;
         l = 1.0 - exp(-l * uGain);
         float n = hash(floor(vUv / uPx / 1.5) + fract(uTime * 13.0) * 91.0) - 0.5;
-        l = clamp(l + n * uNoise, 0.0, 1.0);
+        l = mix(l, 1.0, uBlind);                                      // daylight: the intensifier saturates to a white-green glare
+        l = clamp(l + n * (uNoise + uBlind * 0.25), 0.0, 1.0);
         l *= 0.94 + 0.06 * sin(vUv.y / uPx.y * 1.4);
         vec2 d = (vUv - 0.5) * vec2(uAspect, 1.0);
         float r = length(d);
         float mask = smoothstep(0.86, 0.66, r) * (1.0 - 0.3 * r);
-        vec3 g = vec3(0.16, 1.0, 0.34) * l + vec3(0.0, 0.025, 0.01);
+        vec3 g = mix(vec3(0.16, 1.0, 0.34), vec3(0.85, 1.0, 0.88), uBlind * 0.7) * l + vec3(0.0, 0.025, 0.01);
         gl_FragColor = vec4(pow(g * mask, vec3(0.9)), 1.0);
       }`,
     depthTest: false, depthWrite: false
@@ -1098,15 +1099,15 @@ const SND = __SOUNDS__;
   }
   function toggleNV() {
     if (!NV.want && FIG.nvLock > 0) { sfx('nv_glitch', 0.5, 1.2, 0, 0, 0); toast('Night vision rebooting…', 1.2); return; }
-    NV.want = !NV.want; NV.t = 0.0001;
+    NV.want = !NV.want; NV.t = 0.0001; NV.blindTold = false;
     sfx(NV.want ? 'nvg_on' : 'nvg_off', 1); $('nvlabel').hidden = !NV.want;
   }
   function toggleTorch() { torchOn = !torchOn; sfx('torch', 0.8, torchOn ? 1.1 : 0.95); }
   // ================================================================ the thing you only see through night vision
   // Tall, thin, faceless. It is only ever drawn while the goggles are down. It never moves while you're looking.
   // Every time you flip the goggles up and back down after seeing it, it is closer. When it's close enough, it's right there.
-  // Leave the goggles on and it moves anyway, every 30 to 50 seconds, so you can't just wait the night out.
-  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, stalkT: 40, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
+  // Daylight burns out the goggles, so every night you have to put them on again. It remembers how close it got.
+  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
   // ================================================================ the figure's body: starved, too tall, too long in the arm, and it smiles
   // Built from tubes and ellipsoids, then merged per moving part. Shading is baked into vertex colours as if lit by the goggles'
   // own IR illuminator (from the viewer), so it reads through the intensifier at any distance, with black sockets and a black mouth.
@@ -1355,7 +1356,7 @@ const SND = __SOUNDS__;
       else if (k === 13) best = p;
     }
     FIG.g.position.copy(best); FIG.tiltWant = rand(-0.45, 0.45); FIG.tilt = FIG.tiltWant;
-    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.stalkT = rand(32, 50); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
+    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
   }
   // it won't be stared at, and it won't be walked up to. Either way it's simply not there any more, until the next time the goggles come down.
   function vanishFigure(why) {
@@ -1394,26 +1395,17 @@ const SND = __SOUNDS__;
   }
   function figureCloser() {
     if (FIG.seen <= 0.35) return false;
-    FIG.D *= 0.55; if (FIG.D < 9) scareFigure(); else placeFigure();
+    FIG.D *= 0.45; if (FIG.D < 9) scareFigure(); else placeFigure();
     return true;
   }
   function updateFigure(dt) {
-    const night = TOD.dark > 0.7 && inRun && P.alive && !gameOver;
+    const night = TOD.dark > 0.45 && inRun && P.alive && !gameOver;     // as soon as the goggles stop blinding you
     FIG.cool = Math.max(0, FIG.cool - dt); FIG.nvLock = Math.max(0, FIG.nvLock - dt); FIG.glitch = Math.max(0, FIG.glitch - dt);
-    if (!night) { FIG.active = false; FIG.g.visible = false; FIG.nvWas = NV.on; FIG.heartRate = Math.max(0, FIG.heartRate - dt * 0.3); return; }
-    if (!FIG.active && FIG.cool <= 0) { FIG.active = true; FIG.D = 72; FIG.seen = 0; placeFigure(); }
+    if (!night) { FIG.active = false; FIG.g.visible = false; if (!NV.on) FIG.nvWas = false; FIG.heartRate = Math.max(0, FIG.heartRate - dt * 0.3); return; }
+    if (!FIG.active && FIG.cool <= 0) { FIG.active = true; placeFigure(); }      // D and seen carry over from last night
     // goggles just came down: if you'd seen it, it's closer now
     if (NV.on && !FIG.nvWas && FIG.active) { figureCloser(); FIG.seen = 0; }
     FIG.nvWas = NV.on;
-    // leave the goggles on and it doesn't wait for you: every so often the tube flickers, and it has moved
-    if (NV.on && FIG.active && FIG.scareT === 0) {
-      FIG.stalkT -= dt;
-      if (FIG.stalkT <= 0) {
-        FIG.glitch = Math.max(FIG.glitch, 0.3); sfx('nv_glitch', 0.4, 1.2, 0, 0, 0);
-        if (!figureCloser()) placeFigure();    // you never noticed it: it steps back into view, no nearer
-        FIG.seen = 0;
-      }
-    }
     // the scare: a second and a half in your face, then the goggles short out and it's gone
     if (FIG.scareT > 0) {
       FIG.scareT += dt;
@@ -1520,9 +1512,9 @@ const SND = __SOUNDS__;
       hip: 0.022, ads: 0.003, move: [0.018, 0.006], dmg: { head: 70, body: 25, leg: 19 }, recoil: 0.009, kick: 0.45, reload: [1.9, 2.4], tracerEvery: 4,
       muzzle: SM.muzzle, port: SM.port, snd: { shot: ['shot_m0', 'shot_m1'], far: 'far_m', dry: 'dry_m', cases: ['case_p0', 'case_p1'] }, casing: 0.8,
       HIP: { pos: new V3(0.14, -0.17, -0.38), rot: new THREE.Euler(0.01, 0.04, 0.0) }, ADS: { pos: new V3(0, -SM.sightY + 0.001, -0.2), rot: new THREE.Euler(0, 0, 0) }, SPRINT: SPRINT_DEF },
-    shotgun: { key: 'shotgun', irons: true, name: 'Shotgun', cal: '12 ga', blurb: 'Pump action, nine pellets. Devastating up close.', bars: [0.95, 0.2, 0.25, 0.55],
+    shotgun: { key: 'shotgun', irons: true, name: 'Shotgun', cal: '12 ga', blurb: 'Pump action, nine pellets. Devastating up close.', bars: [1.0, 0.2, 0.3, 0.55],
       magSize: 7, reserveMax: 35, interval: 0.15, auto: false, adsRate: 13, fov: 60, vfov: 48, pump: 0.62, pellets: 9, shells: true,
-      hip: 0.06, ads: 0.045, move: [0.01, 0.005], dmg: { head: 30, body: 17, leg: 12 }, recoil: 0.055, kick: 1.3, reload: [0, 0], tracerEvery: 1,
+      hip: 0.05, ads: 0.035, move: [0.01, 0.005], dmg: { head: 45, body: 26, leg: 18 }, recoil: 0.055, kick: 1.3, reload: [0, 0], tracerEvery: 1,
       muzzle: SG.muzzle, port: SG.port, snd: { shot: ['shot_g'], far: 'far_g', dry: 'dry_g', cases: ['case_g0', 'case_g1'] }, casing: 0,
       HIP: { pos: new V3(0.15, -0.18, -0.44), rot: new THREE.Euler(0.01, 0.035, 0.0) }, ADS: { pos: new V3(0, -SG.sightY - 0.004, -0.22), rot: new THREE.Euler(0, 0, 0) }, SPRINT: SPRINT_DEF },
     pistol: { key: 'pistol', irons: true, name: 'Pistol', cal: '9mm', blurb: 'Quick to draw, quick to aim. Slide locks back when empty.', bars: [0.35, 0.55, 0.4, 1.0],
@@ -2494,6 +2486,7 @@ const SND = __SOUNDS__;
     for (const c of covers) c.claimed = null;
     bots.forEach(b => { resetBot(b); benchBot(b); });
     WAVE.n = 0; WAVE.phase = 'pre'; WAVE.t = 5; TOD.th = 0.2; TOD.skyT = 0; torchOn = false; NV.want = NV.on = false; NV.t = 0; $('nvlabel').hidden = true;
+    FIG.D = 72; FIG.seen = 0; FIG.cool = 0; FIG.active = false; FIG.scareT = 0; FIG.nvWas = false;    // a new run: it starts far away again
     P.climb = null; P.highT = 0; updateDayNight(0);
     Object.assign(FIG, { gone: false, stare: 0, jaw: 0.06, reach: 0, twY: 0, twP: 0, active: false, cool: 0, D: 72, seen: 0, events: [], heartRate: 0, scareT: 0, nvLock: 0, glitch: 0 }); FIG.g.visible = false;
     for (const c of casings) { c.m.visible = false; }
@@ -2615,7 +2608,7 @@ const SND = __SOUNDS__;
       if (!hits.length) continue;
       const h = hits[0];
       if (stats.shots % Wd.tracerEvery === 0 && (i === 0 || i % 3 === 0)) tracer(muzzleW, h.point);
-      const fall = Wd.pellets ? clamp(1 - (h.distance - 10) / 28, 0.2, 1) : 1;
+      const fall = Wd.pellets ? clamp(1 - (h.distance - 14) / 34, 0.2, 1) : 1;      // full damage out to 14 m
       if (h.object.userData.bot) { damageBot(h.object.userData.bot, h.object.userData.part, h.point, fall, !scored); scored = true; }
       else if (h.object.userData.remote) { hitRemote(h.object.userData.remote, h.object.userData.part, h.point, fall, !scored); scored = true; }
       else impact(h, Wd.pellets && i > 2);
@@ -2920,6 +2913,8 @@ const SND = __SOUNDS__;
       const near = FIG.g.visible ? 1 - FIG.D / 72 : 0;
       nvMat.uniforms.uNoise.value = 0.16 + near * 0.16 + FIG.glitch * 1.5 + (FIG.scareT > 0.75 ? (FIG.scareT - 0.75) * 0.8 : 0); nvMat.uniforms.uTear.value = near * near * near * 0.3 + FIG.glitch * 3 + (FIG.scareT > 0 ? (FIG.scareT < 0.75 ? 0.04 : (FIG.scareT - 0.75) * 4) : 0);   // the scare: a clear look at its face first, then the tube falls apart
       nvMat.uniforms.uTime.value = simTime + now * 0.001; nvMat.uniforms.uGain.value = lerp(2.2, 13, TOD.dark) * (torchOn ? 0.8 : 1);
+      const blind = clamp((0.45 - TOD.dark) / 0.35, 0, 1); nvMat.uniforms.uBlind.value = blind;
+      if (blind > 0.5 && !NV.blindTold) { NV.blindTold = true; toast('Too bright for night vision<small>Press N to take the goggles off</small>', 2.5); }
       renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, cam); renderer.clearDepth();
       if (P.alive && vmRoot.visible) renderer.render(vScene, vCam);
       renderer.setRenderTarget(null); renderer.clear(); nvMat.uniforms.tDiffuse.value = rt.texture; renderer.render(nvScene, nvCam);
@@ -3409,7 +3404,7 @@ const SND = __SOUNDS__;
         skipRender = false;
         if (d.fire) { for (let k = 0; k < d.fire; k++) if (Wp.mag > 0 && !Wp.reloading) shoot(); }
       }
-      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, stalk: +FIG.stalkT.toFixed(1), cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
+      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
         P: { pos: v(P.pos), yaw: +P.yaw.toFixed(2), pitch: +P.pitch.toFixed(2), hp: Math.round(P.hp), alive: P.alive }, weapon: Wp.cur, ads: +Wp.ads.toFixed(2), bolt: +Wp.boltT.toFixed(2), fov: +cam.fov.toFixed(1), mag: Wp.mag, reserve: Wp.reserve, reloading: Wp.reloading,
         bots: bots.map(b => ({ n: b.team.name, pos: v(b.pos), hp: b.hp, alive: b.alive, st: b.state, sees: b.sees, aware: +b.aware.toFixed(2), crouch: +b.crouch.toFixed(2), cover: !!b.cover, shots: b.shots })) });
     } catch (err) { reply({ error: String(err && err.stack || err) }); }
