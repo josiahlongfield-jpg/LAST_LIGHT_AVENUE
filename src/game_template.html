@@ -34,6 +34,9 @@ html, body { margin: 0; height: 100%; background: var(--panel-solid); color: var
 #scope .ret i.h { left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; background: linear-gradient(90deg, #000 0 40%, transparent 40% 60%, #000 60%); }
 #scope .ret i.v { top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: linear-gradient(180deg, #000 0 40%, transparent 40% 60%, #000 60%); }
 #scope .ret i.h::after, #scope .ret i.v::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent 47%, #111 47% 47.2%, transparent 47.2% 52.8%, #111 52.8% 53%, transparent 53%); }
+/* the carbine's 4x scope: a red chevron instead of the sniper's crosshair */
+#scope.acog .ret i { display: none; }
+#scope.acog .ret b { width: 0; height: 0; margin: 0 0 0 -9px; border-radius: 0; background: none; box-shadow: none; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #ff3b2f; filter: drop-shadow(0 0 4px rgba(255, 59, 47, .8)); }
 #scope .ret b { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #ff3b2f; box-shadow: 0 0 4px #ff3b2f; }
 #breath { position: absolute; left: 50%; bottom: 13%; transform: translateX(-50%); width: 160px; text-align: center; font: 600 .7rem var(--display);
   letter-spacing: .12em; text-transform: uppercase; color: var(--dim); opacity: 0; transition: opacity .2s; }
@@ -155,6 +158,19 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
 .lo-info p { grid-column: 1 / -1; margin: 0; color: var(--ink); }
 .lo-info p b { font: 700 .9rem var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); margin-right: 6px; }
 .lo-bar { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 6px; }
+.lo-att { border-top: 1px solid var(--line); padding-top: 8px; }
+.lo-att summary { cursor: pointer; font: 600 .78rem var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--amber); }
+.lo-att summary small { color: var(--dim); letter-spacing: .04em; text-transform: none; font: 400 .74rem var(--body, inherit); margin-left: 6px; }
+.lo-att canvas { display: block; width: 100%; max-width: 360px; height: auto; margin: 6px auto 2px; }
+.att-row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; margin-top: 5px; }
+.att-row > span { font: 600 .68rem var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.att-row div { display: flex; flex-wrap: wrap; gap: 5px; }
+.att-row button { padding: 3px 8px; background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font: 600 .68rem var(--display); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.att-row button[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); background: rgba(240,160,80,.08); }
+.att-row button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.att-note { margin: 6px 0 0; min-height: 1.2em; font-size: .76rem; color: var(--dim); }
+#dot.holo { width: 26px; height: 26px; margin: -13px 0 0 -13px; background: radial-gradient(circle, var(--red) 0 2px, transparent 2.5px); border: 2px solid rgba(255, 77, 61, .9); box-shadow: 0 0 6px 1px rgba(255, 77, 61, .45), inset 0 0 4px rgba(255, 77, 61, .4); }
+#dot.scope { width: 0; height: 0; margin: -1px 0 0 -6px; border-radius: 0; background: none; box-shadow: none; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--red); filter: drop-shadow(0 0 3px rgba(255, 77, 61, .7)); }
 .lo-bar i { display: block; height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--amber) var(--v), rgba(255,255,255,.1) var(--v)); }
 @media (max-width: 640px) { .card h1 { font-size: 1.9rem; } .stats { grid-template-columns: repeat(2, 1fr); } #roster span { width: 18px; height: 18px; } }
 </style>
@@ -218,6 +234,10 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
         <div class="lo-row"><span>Slot 1</span><div class="lo-pick" data-slot="0"></div></div>
         <div class="lo-row"><span>Slot 2</span><div class="lo-pick" data-slot="1"></div></div>
         <div class="lo-info" id="loinfo"></div>
+        <details class="lo-att" id="loatt" hidden><summary>Carbine attachments <small id="loattsum"></small></summary>
+          <canvas id="attprev" width="520" height="150" aria-hidden="true"></canvas>
+          <div id="attrows"></div><p class="att-note" id="attnote"></p>
+        </details>
       </div>
       <div id="brief">
         <div class="controls">
@@ -241,7 +261,7 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
       <details class="credits"><summary>Sound credits</summary>
         <p>Every sound is a real recording from an openly licensed pack, trimmed, pitched, layered and positioned in 3D for this game.</p>
         <ul>
-          <li>Guns: 5.56 shots, IG1889 bolt-action and Beretta M1934 magazine/slide handling, Browning Auto 5 shell loading: DoctorBoomstick (CC BY 4.0). .308 bolt cycling and brass: <a href="https://freesound.org/s/441806/" target="_blank" rel="noopener">FST180081</a> (CC BY 4.0). Rifle shot: <a href="https://soundbible.com/1998-Gun-Fire.html" target="_blank" rel="noopener">Mike Koenig</a> (CC BY 3.0). 9mm shot: <a href="https://soundbible.com/2120-9mm-Gunshot.html" target="_blank" rel="noopener">GoodSoundForYou</a> (CC BY 3.0). SMG shot: <a href="https://soundbible.com/1575-High-Definition-Machine-Gun.html" target="_blank" rel="noopener">WEL</a> (CC BY 3.0). Shotgun shot: <a href="https://freesound.org/s/473846/" target="_blank" rel="noopener">LilMati</a> (CC0). Pump action: <a href="https://freesound.org/s/530225/" target="_blank" rel="noopener">magnuswaker</a> (CC0). Dry fire: <a href="https://freesound.org/s/528708/" target="_blank" rel="noopener">Rolly-SFX</a> (CC0), <a href="https://freesound.org/s/467183/" target="_blank" rel="noopener">Sophia_C</a> (CC BY 4.0).</li>
+          <li>Guns: 5.56 shots, IG1889 bolt-action and Beretta M1934 magazine/slide handling, Browning Auto 5 shell loading: DoctorBoomstick (CC BY 4.0). .308 bolt cycling and brass: <a href="https://freesound.org/s/441806/" target="_blank" rel="noopener">FST180081</a> (CC BY 4.0). Rifle shot: <a href="https://soundbible.com/1998-Gun-Fire.html" target="_blank" rel="noopener">Mike Koenig</a> (CC BY 3.0). 9mm shot: <a href="https://soundbible.com/2120-9mm-Gunshot.html" target="_blank" rel="noopener">GoodSoundForYou</a> (CC BY 3.0). SMG shot: <a href="https://soundbible.com/1575-High-Definition-Machine-Gun.html" target="_blank" rel="noopener">WEL</a> (CC BY 3.0). Shotgun shot: <a href="https://freesound.org/s/473846/" target="_blank" rel="noopener">LilMati</a> (CC0). Pump action: <a href="https://freesound.org/s/530225/" target="_blank" rel="noopener">magnuswaker</a> (CC0). Suppressed shots: <a href="https://freesound.org/s/714332/" target="_blank" rel="noopener">Astronaut77890</a>, modified by VMSolidus (CC BY 4.0); <a href="https://freesound.org/s/690099/" target="_blank" rel="noopener">Carlfnf</a> (CC0); <a href="https://freesound.org/s/188499/" target="_blank" rel="noopener">UnderlinedDesigns</a> and <a href="https://freesound.org/s/789647/" target="_blank" rel="noopener">DrinkingWindGames</a>, modified by Halycon (CC BY 4.0). Dry fire: <a href="https://freesound.org/s/528708/" target="_blank" rel="noopener">Rolly-SFX</a> (CC0), <a href="https://freesound.org/s/467183/" target="_blank" rel="noopener">Sophia_C</a> (CC BY 4.0).</li>
           <li>Footsteps: concrete <a href="https://freesound.org/s/336598/" target="_blank" rel="noopener">InspectorJ</a> (CC BY), gravel <a href="https://freesound.org/s/384871/" target="_blank" rel="noopener">ali-6868</a> (CC0), metal <a href="https://freesound.org/s/421137/" target="_blank" rel="noopener">GiocoSound</a> (CC0), puddles <a href="https://freesound.org/s/372518/" target="_blank" rel="noopener">dawidwmika</a> (CC0), heavy landing <a href="https://freesound.org/s/406747/" target="_blank" rel="noopener">kretopi</a> (CC0).</li>
           <li>Hits and impacts: voice <a href="https://freesound.org/s/413181/" target="_blank" rel="noopener">micahlg</a> (CC0), body hits <a href="https://freesound.org/s/383882/" target="_blank" rel="noopener">freesound user 7146007</a> (CC0), steel <a href="https://freesound.org/s/177783/" target="_blank" rel="noopener">dheming</a> (CC BY 4.0) and <a href="https://freesound.org/s/135453/" target="_blank" rel="noopener">JoelAudio</a> (CC BY 4.0), concrete <a href="https://freesound.org/s/342888/" target="_blank" rel="noopener">oscaraudiogeek</a> (CC0), dropped magazine <a href="https://freesound.org/s/151470/" target="_blank" rel="noopener">bellick</a> (CC0).</li>
           <li>Gear and radio: switch click <a href="https://freesound.org/s/439673/" target="_blank" rel="noopener">jzielke011</a> (CC0), tube whine <a href="https://freesound.org/s/335365/" target="_blank" rel="noopener">nicola_ariutti</a> (CC BY 4.0), static <a href="https://freesound.org/s/74936/" target="_blank" rel="noopener">digifishmusic</a> (CC BY 4.0), radio chatter <a href="https://freesound.org/s/255851/" target="_blank" rel="noopener">kwahmah_02</a> (CC BY 3.0).</li>
@@ -1568,6 +1588,16 @@ const SND = __SOUNDS__;
     const light = new THREE.PointLight(0xffc06a, 0, 1.2, 2); light.position.copy(fl.position); body.add(light);
     RIGS[k] = { flip, body, mag, arms, optic, bolt, boltPivot, slide, pump, charge, flash: fl, light, armL: [] };
   }
+  const CARB = { front: new THREE.Group(), mats: {} }; RIGS.carbine.body.add(CARB.front);
+  function splitTris(geo, test) {      // [triangles that pass, the rest] as two non-indexed geometries (null when empty)
+    const g = geo.index ? geo.toNonIndexed() : geo, P_ = g.attributes.position.array, N_ = g.attributes.normal.array, out = [[[], []], [[], []]];
+    const tri = [new V3(), new V3(), new V3()];
+    for (let i = 0; i < P_.length; i += 9) {
+      for (let k = 0; k < 3; k++) tri[k].fromArray(P_, i + k * 3);
+      const o = out[test(tri) ? 0 : 1]; for (let k = 0; k < 9; k++) { o[0].push(P_[i + k]); o[1].push(N_[i + k]); }
+    }
+    return out.map(([p, n]) => { if (!p.length) return null; const r = new THREE.BufferGeometry(); r.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); r.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3)); return r; });
+  }
   for (const g of GD.vm) {
     const geo = new THREE.BufferGeometry();
     if (g.flat) { geo.setAttribute('position', new THREE.Float32BufferAttribute(g.flat, 3)); geo.computeVertexNormals(); }
@@ -1576,6 +1606,13 @@ const SND = __SOUNDS__;
     (WGEO[w + ':' + grp] = WGEO[w + ':' + grp] || []).push({ geo, mat: g.mat });
     const R = RIGS[w], mesh = new THREE.Mesh(geo, weaponMaterial(g.mat));
     if (grp === 'armL') { R.armL.push(mesh); continue; }
+    if (w === 'carbine' && grp === 'rifle') {      // split off the barrel (for barrel swaps) and the red dot's turrets (they go with the dot)
+      CARB.mats[g.mat] = CARB.mats[g.mat] || mesh.material;
+      const [front, rest] = splitTris(geo, t => t.every(v => v.z >= 0.499));
+      const [turrets, body] = splitTris(rest, t => t.every(v => v.y > 0.068 && v.z > 0.015 && v.z < 0.075));
+      for (const [gg, parent] of [[body, R.body], [front, CARB.front], [turrets, R.optic]]) if (gg) parent.add(new THREE.Mesh(gg, mesh.material));
+      continue;
+    }
     ({ rifle: R.body, mag: R.mag, arms: R.arms, armR: R.arms, optic: R.optic, scope: R.optic, bolt: R.bolt, slide: R.slide, pump: R.pump, charge: R.charge })[grp].add(mesh);
   }
   // ---------------------------------------------------------------- reload rig: the left arm is its own jointed piece, plus a spare magazine (or shell) it carries
@@ -1610,6 +1647,134 @@ const SND = __SOUNDS__;
     const bb = new THREE.Box3().setFromObject(R.mag);
     Object.assign(R, { armPivot, armInner, spare, magBox: bb, A });
     if (k === 'shotgun') R.mag.visible = false;      // the "mag" group is a single shell, only ever seen in the hand
+  }
+  // ---------------------------------------------------------------- carbine attachments: magazine, barrel, sight, grip, muzzle
+  // Picked on the loadout screen. Each option changes how the carbine handles and what it looks like. The carbine's mesh is split
+  // at load (above) so the barrel in front of the handguard and the red dot's turrets can be swapped out.
+  const ATT_SLOTS = [
+    { k: 'mag', name: 'Magazine', opts: [
+      { k: '20', name: '20 rounds', note: 'Quicker to reload and to aim', mag: 20, reload: 0.85, ads: 1.08 },
+      { k: '30', name: '30 rounds', note: 'Standard issue', mag: 30 },
+      { k: '40', name: '40 rounds', note: 'Longer between reloads, a bit slower to handle', mag: 40, reload: 1.12, ads: 0.94 },
+      { k: 'drum', name: '60 drum', note: 'Rarely reloads, but slow to reload and heavy to aim', mag: 60, reload: 1.4, ads: 0.82, move: 1.15 }] },
+    { k: 'barrel', name: 'Barrel', opts: [
+      { k: 'short', name: 'Short', note: 'Fast to aim and accurate from the hip, kicks harder, less damage', dmg: 0.88, hip: 0.8, recoil: 1.15, ads: 1.12, mz: -0.09 },
+      { k: 'std', name: 'Standard', note: 'Standard issue', mz: 0 },
+      { k: 'long', name: 'Long', note: 'More damage and a tighter aim, slower to bring up', dmg: 1.12, adsSpread: 0.7, recoil: 0.9, ads: 0.88, mz: 0.1, range: 1.15 }] },
+    { k: 'optic', name: 'Sight', opts: [
+      { k: 'irons', name: 'Iron sights', note: 'Nothing in the way: the widest view and the quickest aim', fov: 58, ads: 1.12 },
+      { k: 'dot', name: 'Red dot', note: 'Standard issue' },
+      { k: 'holo', name: 'Holo', note: 'A big ring reticle that is quick to put on target up close', fov: 52, ads: 1.04 },
+      { k: 'scope', name: '4x scope', note: 'Four times magnified for long range, slower to aim', fov: 19, vfov: 30, ads: 0.75, adsSpread: 0.6, range: 1.25 }] },
+    { k: 'grip', name: 'Grip', opts: [
+      { k: 'none', name: 'None', note: 'Nothing under the handguard' },
+      { k: 'vert', name: 'Vertical', note: 'Much less recoil, a little slower to aim', recoil: 0.78, kick: 0.85, ads: 0.94 },
+      { k: 'angled', name: 'Angled', note: 'Quicker to aim, a little less recoil', recoil: 0.9, ads: 1.1 }] },
+    { k: 'muzzle', name: 'Muzzle', opts: [
+      { k: 'hider', name: 'Flash hider', note: 'Standard issue' },
+      { k: 'supp', name: 'Suppressor', note: 'Quiet and flashless: enemies only hear it close by. Slightly less damage', dmg: 0.95, recoil: 0.92, ads: 0.94, range: 0.95 }] }
+  ];
+  const ATT_DEF = { mag: '30', barrel: 'std', optic: 'dot', grip: 'none', muzzle: 'hider' };
+  const ATT = Object.assign({}, ATT_DEF);
+  try { const s = JSON.parse(localStorage.getItem('lla-att') || 'null'); if (s) for (const sl of ATT_SLOTS) if (sl.opts.some(o => o.k === s[sl.k])) ATT[sl.k] = s[sl.k]; } catch (_) {}
+  const CW = WEAPONS.carbine, CB = { magSize: CW.magSize, reserveMax: CW.reserveMax, reload: CW.reload.slice(), adsRate: CW.adsRate, fov: CW.fov, vfov: CW.vfov,
+    hip: CW.hip, ads: CW.ads, move: CW.move.slice(), dmg: Object.assign({}, CW.dmg), recoil: CW.recoil, kick: CW.kick, bars: CW.bars.slice(), muzzle: CW.muzzle[2], adsZ: CW.ADS.pos.z };
+  const SUP_SND = ['shot_sup0', 'shot_sup1', 'shot_sup2'];
+  // the parts, built once and shown or hidden
+  const CR = RIGS.carbine, AM = {
+    gun: CARB.mats.gun, rubber: CARB.mats.rubber, poly: CARB.mats.polymer,
+    glass: new THREE.MeshStandardMaterial({ color: 0x223040, metalness: 0.2, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }),
+    lens: new THREE.MeshStandardMaterial({ color: 0x5a7a9a, metalness: 0.6, roughness: 0.1, transparent: true, opacity: 0.12, depthWrite: false }),
+    red: new THREE.MeshBasicMaterial({ color: 0xff3a2a, toneMapped: false })
+  };
+  const am = (geo, m, parent, x, y, z, rx = 0, ry = 0, rz = 0) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.rotation.set(rx, ry, rz); parent.add(me); return me; };
+  const cylZ = (r0, r1, len, seg = 16, open = false) => new THREE.CylinderGeometry(r1, r0, len, seg, 1, open).rotateX(Math.PI / 2);      // along +z, r0 at the back
+  const AP = {};
+  { // iron sights: a rear aperture behind the mount and a hooded front post on the front sight base, both on the 0.093 sight line
+    const g = AP.irons = new THREE.Group();
+    am(new THREE.BoxGeometry(0.02, 0.016, 0.02), AM.gun, g, 0, 0.06, -0.025);
+    for (const s of [-1, 1]) am(new THREE.BoxGeometry(0.0022, 0.026, 0.008), AM.gun, g, s * 0.0085, 0.08, -0.025);
+    am(new THREE.TorusGeometry(0.0042, 0.0011, 6, 16), AM.gun, g, 0, 0.093, -0.025);
+    am(new THREE.BoxGeometry(0.0025, 0.0065, 0.004), AM.gun, g, 0, 0.0857, -0.025);
+    am(new THREE.BoxGeometry(0.0028, 0.034, 0.003), AM.gun, g, 0, 0.0763, 0.486);
+    for (const s of [-1, 1]) am(new THREE.BoxGeometry(0.0022, 0.028, 0.01), AM.gun, g, s * 0.0075, 0.074, 0.486);
+  }
+  { // holographic sight: a boxy base with a hooded window
+    const g = AP.holo = new THREE.Group();
+    am(new THREE.BoxGeometry(0.036, 0.014, 0.085), AM.gun, g, 0, 0.064, 0.035);
+    am(new THREE.BoxGeometry(0.012, 0.012, 0.03), AM.rubber, g, 0.024, 0.066, 0.01);
+    for (const s of [-1, 1]) am(new THREE.BoxGeometry(0.004, 0.046, 0.05), AM.gun, g, s * 0.023, 0.094, 0.05);
+    am(new THREE.BoxGeometry(0.05, 0.004, 0.05), AM.gun, g, 0, 0.1165, 0.05);
+    am(new THREE.PlaneGeometry(0.042, 0.042), AM.glass, g, 0, 0.093, 0.07);
+    am(new THREE.PlaneGeometry(0.042, 0.042), AM.glass, g, 0, 0.093, 0.032);
+  }
+  { // 4x scope: a short fat tube on two rings, a bell at each end and turrets on top and side
+    const g = AP.scope = new THREE.Group(), y = 0.093;
+    am(cylZ(0.0155, 0.0155, 0.12, 16, true), AM.gun, g, 0, y, 0.04);
+    am(cylZ(0.0155, 0.0215, 0.03, 16, true), AM.gun, g, 0, y, 0.115);
+    am(cylZ(0.0215, 0.0215, 0.016, 16, true), AM.gun, g, 0, y, 0.138);
+    am(cylZ(0.019, 0.0155, 0.022, 16, true), AM.gun, g, 0, y, -0.031);
+    am(cylZ(0.019, 0.019, 0.02, 16, true), AM.rubber, g, 0, y, -0.052);
+    am(new THREE.CylinderGeometry(0.008, 0.008, 0.016, 12), AM.gun, g, 0, y + 0.02, 0.04);
+    am(new THREE.CylinderGeometry(0.008, 0.008, 0.016, 12).rotateZ(Math.PI / 2), AM.gun, g, 0.02, y, 0.04);
+    for (const z of [0.005, 0.075]) { am(new THREE.BoxGeometry(0.024, 0.03, 0.012), AM.gun, g, 0, 0.066, z); am(new THREE.TorusGeometry(0.017, 0.0025, 6, 18), AM.gun, g, 0, y, z); }
+    am(new THREE.CircleGeometry(0.02, 20), AM.lens, g, 0, y, 0.146);
+    const rear = am(new THREE.CircleGeometry(0.0185, 20), AM.lens, g, 0, y, -0.062); rear.rotation.y = Math.PI;
+  }
+  { // grips, hung under the handguard ahead of the left hand
+    AP.vert = new THREE.Group(); am(new THREE.CylinderGeometry(0.0135, 0.0125, 0.08, 10), AM.rubber, AP.vert, 0, -0.045, 0.335, 0.12);
+    am(new THREE.BoxGeometry(0.024, 0.01, 0.04), AM.gun, AP.vert, 0, -0.008, 0.33);
+    AP.angled = new THREE.Group(); am(new THREE.BoxGeometry(0.022, 0.026, 0.075), AM.rubber, AP.angled, 0, -0.02, 0.33, -0.42);
+    am(new THREE.BoxGeometry(0.024, 0.008, 0.07), AM.gun, AP.angled, 0, -0.008, 0.33);
+  }
+  { // suppressor: a long can over the flash hider, with a few machined rings
+    const g = AP.supp = new THREE.Group();
+    am(cylZ(0.0185, 0.0185, 0.17, 18), AM.gun, g, 0, 0, 0.05);
+    for (const z of [-0.03, 0.12]) am(cylZ(0.0192, 0.0192, 0.008, 18), AM.rubber, g, 0, 0, z);
+    am(new THREE.TorusGeometry(0.012, 0.004, 6, 16), AM.rubber, g, 0, 0, 0.135);
+  }
+  // a longer barrel: a length of tube fills the gap behind the moved muzzle
+  AP.ext = new THREE.Group(); am(cylZ(0.0085, 0.0085, 0.1, 12), AM.gun, AP.ext, 0, CW.muzzle[1], 0.55);
+  { // the drum: a fat round magazine under the mag well
+    const g = AP.drum = new THREE.Group();
+    am(new THREE.BoxGeometry(0.024, 0.07, 0.06), AM.poly, g, 0, -0.06, 0.115, -0.15);
+    am(new THREE.CylinderGeometry(0.068, 0.068, 0.05, 24).rotateZ(Math.PI / 2), AM.poly, g, 0, -0.15, 0.125);
+    for (const s of [-1, 1]) am(new THREE.CylinderGeometry(0.05, 0.05, 0.004, 24).rotateZ(Math.PI / 2), AM.rubber, g, s * 0.026, -0.15, 0.125);
+    am(new THREE.CylinderGeometry(0.012, 0.012, 0.06, 10).rotateZ(Math.PI / 2), AM.gun, g, 0, -0.15, 0.125);
+  }
+  CR.body.add(AP.irons, AP.holo, AP.scope, AP.vert, AP.angled, AP.ext); CARB.front.add(AP.supp); CR.mag.add(AP.drum);
+  const MAG_MESHES = CR.mag.children.filter(c => c.isMesh);
+  function localBox(root) {      // bounding box of what's showing, in root's own space
+    root.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), bb = new THREE.Box3(), m = new THREE.Matrix4();
+    root.traverseVisible(o => { if (o.isMesh) { if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(m.multiplyMatrices(inv, o.matrixWorld))); } });
+    return bb;
+  }
+  const attOpt = k => { const sl = ATT_SLOTS.find(s => s.k === k); return sl.opts.find(o => o.k === ATT[k]); };
+  function applyAttachments() {
+    const sel = ATT_SLOTS.map(s => attOpt(s.k)), m = { dmg: 1, hip: 1, adsSpread: 1, recoil: 1, kick: 1, ads: 1, reload: 1, move: 1, range: 1 };
+    for (const o of sel) for (const k in m) if (o[k]) m[k] *= o[k];
+    const mag = attOpt('mag'), bar = attOpt('barrel'), opt = attOpt('optic'), supp = ATT.muzzle === 'supp';
+    Object.assign(CW, { magSize: mag.mag, reserveMax: Math.max(CB.reserveMax, mag.mag * 4), reload: CB.reload.map(r => r * m.reload), adsRate: CB.adsRate * m.ads,
+      fov: opt.fov || CB.fov, vfov: opt.vfov || CB.vfov, hip: CB.hip * m.hip, ads: CB.ads * m.adsSpread, move: CB.move.map(v => v * m.move),
+      dmg: { head: CB.dmg.head * m.dmg, body: CB.dmg.body * m.dmg, leg: CB.dmg.leg * m.dmg }, recoil: CB.recoil * m.recoil, kick: CB.kick * m.kick,
+      irons: opt.k === 'irons', scope: opt.k === 'scope', reticle: opt.k, supp });
+    CW.ADS.pos.z = CB.adsZ - (opt.k === 'scope' ? 0.035 : 0);
+    CW.bars = [clamp(CB.bars[0] * m.dmg, 0, 1), CB.bars[1], clamp(CB.bars[2] * m.range, 0, 1), clamp(CB.bars[3] * m.ads, 0, 1)];
+    // the look
+    CR.optic.visible = opt.k === 'dot'; for (const k of ['irons', 'holo', 'scope']) AP[k].visible = opt.k === k;
+    AP.vert.visible = ATT.grip === 'vert'; AP.angled.visible = ATT.grip === 'angled';
+    CARB.front.position.z = bar.mz; AP.ext.visible = bar.mz > 0; AP.supp.visible = supp; AP.supp.position.set(0, CW.muzzle[1], CB.muzzle);
+    CW.muzzle[2] = CB.muzzle + bar.mz + (supp ? 0.135 : 0);
+    CR.flash.position.z = CR.light.position.z = CW.muzzle[2]; CR.flash.scale.setScalar(supp ? 0.35 : 1);
+    for (const me of MAG_MESHES) { const s = mag.k === '20' ? 0.72 : mag.k === '40' ? 1.3 : 1; me.visible = mag.k !== 'drum'; me.scale.y = s; me.position.y = -0.027 * (1 - s); }
+    AP.drum.visible = mag.k === 'drum';
+    // the spare the left hand brings up, and the empties it drops, match the magazine
+    CR.spare.clear(); for (const c of CR.mag.children) if (c !== CR.veilMag) CR.spare.add(c.clone());
+    CR.magBox = localBox(CR.mag);
+    for (let i = dropMags.length - 1; i >= 0; i--) if (dropMags[i].kind === 'carbine') { scene.remove(dropMags[i].g); dropMags.splice(i, 1); }
+    if (CR.veil) { const on = CR.veil.visible; CR.body.remove(CR.veil); if (CR.veilMag) CR.mag.remove(CR.veilMag); CR.veilMag = null; veilKit('carbine'); CR.veil.visible = on; if (CR.veilMag) CR.veilMag.visible = on; }
+    hud.dot.className = opt.k;
+    try { localStorage.setItem('lla-att', JSON.stringify(ATT)); } catch (_) {}
   }
   // keyframes for the left wrist (W) and where the elbow trails from it (D), in the gun's own space
   const POUCH = { W: new V3(0.24, -0.62, 0.0), D: new V3(0.12, -0.28, -0.15) };
@@ -1678,7 +1843,8 @@ const SND = __SOUNDS__;
   function makeDropMag(k) {
     const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner);
     const bb = RIGS[k].magBox, c = bb.getCenter(new V3());
-    for (const { geo, mat: mk } of WGEO[k + ':mag']) { const m = new THREE.Mesh(geo, botWeaponMats[mk]); m.castShadow = true; inner.add(m); }
+    if (k === 'carbine') { for (const ch of RIGS.carbine.mag.children) if (ch !== RIGS.carbine.veilMag) inner.add(ch.clone()); }      // whichever magazine is fitted
+    else for (const { geo, mat: mk } of WGEO[k + ':mag']) { const m = new THREE.Mesh(geo, botWeaponMats[mk]); m.castShadow = true; inner.add(m); }
     inner.position.copy(c).negate(); g.visible = false; scene.add(g);
     return { g, kind: k, vel: new V3(), spin: new V3(), rest: true, floor: 0, half: Math.max(0.012, (bb.max.x - bb.min.x) / 2), age: 0 };
   }
@@ -1772,7 +1938,7 @@ const SND = __SOUNDS__;
   // ================================================================ audio
   let actx = null, master = null, bufs = {}, volume = 0.8;
   const GAIN = { shotfar: 0.8, step: 0.3, tink: 0.16, ping: 0.6, land: 0.45, hit: 0.5, hit_kill: 0.6, raise: 0.4, lower: 0.35, crack: 0.55, hurt: 0.8, bodyhit: 0.6, magdrop: 0.4,
-    shot_c0: 0.62, shot_c1: 0.62, shot_c2: 0.62, far_c: 0.75, shot_s: 0.9, far_s: 0.85, dry_c: 0.55, dry_s: 0.55,
+    shot_c0: 0.62, shot_c1: 0.62, shot_c2: 0.62, shot_sup0: 0.5, shot_sup1: 0.5, shot_sup2: 0.25, far_c: 0.75, shot_s: 0.9, far_s: 0.85, dry_c: 0.55, dry_s: 0.55,
     c_magout: 0.6, c_magin: 0.75, c_magin2: 0.75, c_boltrel: 0.8, s_boltopen: 0.75, s_boltclose: 0.8, s_magout: 0.65, s_magin: 0.7, s_maglock: 0.7, s_reloadclose: 0.75,
     case_c0: 0.22, case_c1: 0.22, case_c2: 0.22, case_s0: 0.3, case_s1: 0.3,
     shot_p: 0.6, far_p: 0.6, dry_p: 0.55, p_magout: 0.55, p_magin: 0.7, p_slide: 0.75, p_slide2: 0.75, case_p0: 0.2, case_p1: 0.2,
@@ -2489,8 +2655,46 @@ const SND = __SOUNDS__;
       }
       for (const b of pick.children) b.setAttribute('aria-pressed', String(b.dataset.w === Wp.loadout[slot]));
     }
-    renderInfo();
+    renderInfo(); renderAtt();
   }
+  // the carbine's attachments: one row per slot, a note on whatever you point at, and a picture of the gun as fitted
+  let attR = null;
+  function attPreview() {
+    try {
+      const cv = $('attprev');
+      if (!attR) {
+        attR = { r: new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true }), sc: new THREE.Scene(), cam: new THREE.PerspectiveCamera(16, cv.width / cv.height, 0.01, 20) };
+        attR.r.outputEncoding = THREE.sRGBEncoding; attR.r.toneMapping = THREE.ACESFilmicToneMapping; attR.r.toneMappingExposure = 1.5;
+        attR.sc.add(new THREE.HemisphereLight(0xfff0dd, 0x3a3f4a, 1.4));
+        const d1 = new THREE.DirectionalLight(0xffe2c0, 2.2); d1.position.set(-1, 1.4, 0.5); attR.sc.add(d1);
+        const d2 = new THREE.DirectionalLight(0x9fb4ff, 0.8); d2.position.set(-0.5, -0.3, -1); attR.sc.add(d2);
+      }
+      if (attR.g) attR.sc.remove(attR.g);
+      attR.g = RIGS.carbine.body.clone(); attR.g.position.set(0, 0, 0); attR.g.rotation.set(0, 0, 0); attR.sc.add(attR.g);
+      const c = new V3(0, -0.02, 0.27);      // frame the longest build (long barrel and a suppressor) so the gun doesn't jump about between options
+      attR.cam.position.set(c.x - 2.05, c.y + 0.12, c.z - 0.08); attR.cam.lookAt(c);
+      attR.r.render(attR.sc, attR.cam);
+    } catch (_) {}
+  }
+  function renderAtt() {
+    const box = $('loatt'); box.hidden = !Wp.loadout.includes('carbine');
+    const rows = $('attrows');
+    if (!rows.children.length) for (const sl of ATT_SLOTS) {
+      const row = document.createElement('div'); row.className = 'att-row'; row.innerHTML = `<span>${sl.name}</span><div></div>`;
+      for (const o of sl.opts) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = o.name; b.dataset.s = sl.k; b.dataset.o = o.k;
+        b.addEventListener('click', () => { ATT[sl.k] = o.k; applyAttachments(); renderAtt(); renderInfo(); $('attnote').textContent = o.note; });
+        const hint = () => { $('attnote').textContent = `${o.name}: ${o.note}`; };
+        b.addEventListener('mouseenter', hint); b.addEventListener('focus', hint);
+        row.lastChild.appendChild(b);
+      }
+      rows.appendChild(row);
+    }
+    for (const b of rows.querySelectorAll('button')) b.setAttribute('aria-pressed', String(ATT[b.dataset.s] === b.dataset.o));
+    $('loattsum').textContent = ATT_SLOTS.map(sl => attOpt(sl.k)).filter((o, i) => o.k !== ATT_DEF[ATT_SLOTS[i].k]).map(o => o.name).join(' · ') || 'standard';
+    if (!box.hidden && box.open) attPreview();
+  }
+  $('loatt').addEventListener('toggle', () => { if ($('loatt').open) attPreview(); });
   function renderInfo() {
     const w = WEAPONS[loFocus];
     const bars = ['Damage', 'Fire rate', 'Range', 'Handling'].map((n, i) => `<div class="lo-bar"><span>${n}</span><i style="--v:${Math.round(w.bars[i] * 100)}%"></i></div>`).join('');
@@ -2504,7 +2708,7 @@ const SND = __SOUNDS__;
     for (const r of Object.values(RIGS)) r.flip.visible = false;
     resetGame(); renderLoadout();
   }
-  renderLoadout();
+  applyAttachments(); renderLoadout();
 
   function endGame(won, killer) {
     gameOver = true; Wp.trigger = false; Wp.adsHeld = false; keys.clear();
@@ -2634,7 +2838,7 @@ const SND = __SOUNDS__;
   function shoot() {
     const Wd = W();
     Wp.mag--; stats.shots++; Wp.cooldown = Wd.interval; updateAmmo(); P.firedAt = simTime;
-    sfx(pick(Wd.snd.shot), 1, rand(0.97, 1.03), 0, -0.05, 0.28);
+    sfx(pick(Wd.supp ? SUP_SND : Wd.snd.shot), Wd.supp ? 0.9 : 1, rand(0.97, 1.03), 0, -0.05, Wd.supp ? 0.12 : 0.28);
     if (VEIL.on) sfx('veil_shot', 0.7, rand(0.92, 1.08));
     if (Wd.bolt) { Wp.boltT = 0.0001; Wp.bEv = 0; Wp.boltOpen = Wp.boltShut = false; }
     if (Wd.pump) { startPump(); Wp.lastFired = true; }
@@ -2649,7 +2853,7 @@ const SND = __SOUNDS__;
     let spread = lerp(Wd.hip, Wd.ads, aimK) + moving * lerp(Wd.move[0], Wd.move[1], aimK) + (P.onGround ? 0 : 0.05);
     spread *= P.crouch > 0.5 ? 0.7 : 1;
     const muzzleW = cam.position.clone().addScaledVector(fwd, 0.7).addScaledVector(right, lerp(0.1, 0, Wp.ads)).addScaledVector(upv, lerp(-0.1, -0.03, Wp.ads));
-    worldFlash.position.copy(muzzleW); worldFlash.intensity = Wd.pellets ? 3.4 : 2.4;
+    worldFlash.position.copy(muzzleW); worldFlash.intensity = Wd.supp ? 0.4 : Wd.pellets ? 3.4 : 2.4;
     const n = Wd.pellets || 1; let scored = false;
     for (let i = 0; i < n; i++) {     // shotgun: nine pellets in a cone, each losing punch with distance
       const a = Math.random() * Math.PI * 2, r = (Wd.pellets ? Math.sqrt(Math.random()) * 0.6 + 0.4 : Math.sqrt(Math.random())) * spread;
@@ -2669,9 +2873,10 @@ const SND = __SOUNDS__;
       else impact(h, Wd.pellets && i > 2);
     }
     if (NET.on) netShot(fwd);
-    if (HUNT.on) huntNoise(P.pos, Wd.pellets ? 80 : 70);
+    const heard = Wd.supp ? 22 : Wd.pellets ? 80 : 70;      // a suppressor only carries a short way
+    if (HUNT.on) huntNoise(P.pos, heard);
     // gunfire is loud: everyone who isn't already fighting turns toward it
-    for (const b of bots) if (b.alive && b.memory <= 0 && b.pos.distanceTo(P.pos) < 70) { b.lastSeen.copy(P.pos); b.memory = 2; b.aware = Math.max(b.aware, 0.6); }
+    for (const b of bots) if (b.alive && b.memory <= 0 && b.pos.distanceTo(P.pos) < heard) { b.lastSeen.copy(P.pos); b.memory = 2; b.aware = Math.max(b.aware, 0.6); }
     if (!Wd.bolt && !Wd.pump) ejectCasing();
   }
   function ejectCasing() {
@@ -3396,8 +3601,8 @@ const SND = __SOUNDS__;
     const R = RIGS[k], mz = WEAPONS[k].muzzle, g = new THREE.Group(), z1 = mz[2] - 0.03, NS = 14, m4 = new THREE.Matrix4();
     R.body.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(R.body.matrixWorld).invert(), pts = [];
-    R.body.traverse(o => {
-      if (!o.isMesh || o.material === flashMat) return;
+    R.body.traverseVisible(o => {
+      if (!o.isMesh || o.material === flashMat || o.material.transparent) return;
       const A = o.geometry.attributes.position; m4.multiplyMatrices(inv, o.matrixWorld);
       for (let i = 0; i < A.count; i++) pts.push(_cv.fromBufferAttribute(A, i).applyMatrix4(m4).toArray());
     });
@@ -3424,7 +3629,7 @@ const SND = __SOUNDS__;
     const band = new THREE.Mesh(new THREE.CylinderGeometry(0.0102, 0.0102, L * 0.45, 12, 1, true).rotateX(Math.PI / 2), VM.core); band.position.copy(can.position); g.add(band);
     // and the rounds themselves glow through a slot in the side of the magazine
     let mb = null; R.mag.updateMatrixWorld(true); const minv = new THREE.Matrix4().copy(R.mag.matrixWorld).invert();
-    R.mag.traverse(o => { if (o.isMesh) { const b = new THREE.Box3().setFromBufferAttribute(o.geometry.attributes.position).applyMatrix4(m4.multiplyMatrices(minv, o.matrixWorld)); mb = mb ? mb.union(b) : b; } });
+    R.mag.traverseVisible(o => { if (o.isMesh) { const b = new THREE.Box3().setFromBufferAttribute(o.geometry.attributes.position).applyMatrix4(m4.multiplyMatrices(minv, o.matrixWorld)); mb = mb ? mb.union(b) : b; } });
     if (mb && k !== 'shotgun') {
       const sz = mb.getSize(new V3()), c = mb.getCenter(new V3()), mg = new THREE.Group();
       for (const sx of [-1, 1]) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.002, sz.y * 0.6, Math.max(0.004, sz.z * 0.18)), VM.glow); m.position.set(c.x + sx * (sz.x / 2 + 0.001), c.y, c.z); mg.add(m); }
@@ -3551,7 +3756,7 @@ const SND = __SOUNDS__;
     const was = HUNT.wasNight, night = huntNightCount();
     // how far your noise carries: sprinting, walking, crouching, shooting, the radio
     const hs = Math.hypot(P.vel.x, P.vel.z);
-    HUNT.loud = !P.alive ? 0 : simTime - (P.firedAt || -9) < 0.6 ? 70 : HUNT.txT > 0 ? 55 : hs > 5 ? 20 : hs > 1 ? (P.crouch > 0.5 ? 3 : 9) : 0;
+    HUNT.loud = !P.alive ? 0 : simTime - (P.firedAt || -9) < 0.6 ? (W().supp ? 20 : 70) : HUNT.txT > 0 ? 55 : hs > 5 ? 20 : hs > 1 ? (P.crouch > 0.5 ? 3 : 9) : 0;
     HUNT.txT -= dt;
     // the flow field, refreshed a few times a second
     HUNT.navT -= dt; if (HUNT.navT <= 0) { HUNT.navT = 0.35; navFlow(); }
@@ -3853,9 +4058,9 @@ const SND = __SOUNDS__;
     }
     if (!P.alive) pos.y -= 0.4;
     vmRoot.position.copy(pos); vmRoot.quaternion.copy(q);
-    const fl = Wp.flashT > 0; RG.flash.visible = fl; RG.light.intensity = fl ? 1.6 : 0; worldFlash.intensity = fl ? worldFlash.intensity * 0.7 : 0;
+    const fl = Wp.flashT > 0; RG.flash.visible = fl; RG.light.intensity = fl ? (Wc.supp ? 0.25 : 1.6) : 0; worldFlash.intensity = fl ? worldFlash.intensity * 0.7 : 0;
     // scope overlay replaces the gun once you're looking through it
-    hud.scope.style.opacity = String(scoped); vmRoot.visible = scoped < 0.98;
+    hud.scope.style.opacity = String(scoped); hud.scope.classList.toggle('acog', Wc.reticle === 'scope'); vmRoot.visible = scoped < 0.98;
 
     // --- HUD
     const moving = Math.min(1, Math.hypot(P.vel.x, P.vel.z) / 4);
@@ -4051,7 +4256,7 @@ const SND = __SOUNDS__;
       r.pres = pres; r.joined = pres.j || 0;
       const name = String(pres.n || 'Player').slice(0, 16), color = (pres.c | 0) % TEAMS.length;
       if (!r.pup || name !== r.name || color !== r.color) { r.name = name; r.color = color; const was = r.pup ? r.pup.root.position.clone() : null; dropPuppet(r); makePuppet(r); if (was) r.pup.root.position.copy(was); }
-      const wk = WEAPON_ORDER[pres.w | 0] || 'carbine'; r.weapon = wk; setPuppetGun(r, wk);
+      const wk = WEAPON_ORDER[pres.w | 0] || 'carbine'; r.weapon = wk; r.supp = !!pres.sp; setPuppetGun(r, wk);
       const alive = pres.al !== 0;
       if (r.alive && !alive) { r.pup.deathT = 0; r.pup.deathDir = Math.random() < 0.5 ? -1 : 1; r.pup.flash.visible = false; }
       if (!r.alive && alive) { r.pup.root.rotation.set(0, 0, 0); r.buf.length = 0; if (Array.isArray(pres.s)) r.pos.set(+pres.s[0] || 0, +pres.s[1] || 0, +pres.s[2] || 0); }
@@ -4095,7 +4300,7 @@ const SND = __SOUNDS__;
     const wk = r.weapon, Wd = WEAPONS[wk];
     const from = remoteMuzzle(r), dir = new V3(+fd[0] || 0, +fd[1] || 0, +fd[2] || -1).normalize();
     const dist = from.distanceTo(cam.position);
-    for (let i = 0; i < n; i++) sfxAt(dist > 32 ? Wd.snd.far : pick(Wd.snd.shot), from, wk === 'sniper' || wk === 'shotgun' ? 2.2 : 1.9, rand(0.96, 1.04), { ref: 12, roll: 0.9, delay: i * Wd.interval });
+    for (let i = 0; i < n; i++) sfxAt(r.supp ? pick(SUP_SND) : dist > 32 ? Wd.snd.far : pick(Wd.snd.shot), from, wk === 'sniper' || wk === 'shotgun' ? 2.2 : 1.9, rand(0.96, 1.04), { ref: 12, roll: 0.9, delay: i * Wd.interval });
     r.pup.flashT = 0.05; enemyFlash.position.copy(from); enemyFlash.intensity = 3.2 * (0.3 + TOD.dark);
     ray.set(from, dir); ray.far = 300;
     const wh = ray.intersectObjects(occluders, false), wallD = wh.length ? wh[0].distance : 300;
@@ -4146,7 +4351,7 @@ const SND = __SOUNDS__;
     const pres = { v: 1, n: NET.name, c: NET.color, j: NET.joinedAt, e: NET.epoch,
       s: [r2(P.pos.x), r2(P.pos.y), r2(P.pos.z), r3(P.yaw), r3(P.pitch), r2(Math.min(P.crouch, 1))],
       w: WEAPON_ORDER.indexOf(Wp.cur), al: P.alive ? 1 : 0, hp: Math.round(P.hp), k: NET.k, d: NET.d, ld: NET.ld, f: NET.f, fd: NET.fd, h: NET.h,
-      tr: torchOn ? 1 : 0, m: NET.host ? NET.M : null };
+      tr: torchOn ? 1 : 0, sp: W().supp ? 1 : 0, m: NET.host ? NET.M : null };
     NET.link.set(pres);
   }
 
@@ -4390,6 +4595,7 @@ const SND = __SOUNDS__;
       }
       if (c === 'fire') { let n = d.n || 1; const go = () => { if (n-- > 0 && Wp.mag > 0) { shoot(); setTimeout(go, 90); } }; go(); }
       if (c === 'ads') Wp.adsHeld = !!d.on;
+      if (c === 'att') { for (const sl of ATT_SLOTS) ATT[sl.k] = d[sl.k] || ATT_DEF[sl.k]; applyAttachments(); resetGame(); renderLoadout(); }
       if (c === 'weapon') { switchWeapon(d.w); }
       if (c === 'loadout') { chooseWeapon(0, d.a); chooseWeapon(1, d.b); inRun = true; playing = true; setMenu(false); }
       if (c === 'key') { keys.add(d.code); if (d.code === 'KeyR') reload(); setTimeout(() => keys.delete(d.code), d.ms || 200); }
@@ -4401,7 +4607,7 @@ const SND = __SOUNDS__;
         skipRender = false;
         if (d.fire) { for (let k = 0; k < d.fire; k++) if (Wp.mag > 0 && !Wp.reloading) shoot(); }
       }
-      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, hunt: HUNT.on ? { kills: HUNT.kills, signals: HUNT.signals, nights: HUNT.nights, loud: HUNT.loud, evac: EVAC.on ? { p: v(EVAC.p), hold: +EVAC.hold.toFixed(1) } : null, radios: RADIOS.map(r => ({ p: v(r.p), prog: +r.prog.toFixed(2), done: r.done, name: r.name })), hz: HZ.filter(h => h.active).map(h => ({ k: h.kind, st: h.state, alive: h.alive, hp: Math.round(h.hp), p: v(h.pos), d: +h.pos.distanceTo(P.pos).toFixed(1) })), spots: CITY.spots.length, veil: { kills: VEIL.kills, have: VEIL.have, on: VEIL.on, caseOn: VEIL.caseOn, fitT: +VEIL.fitT.toFixed(2), case: VEIL.caseOn ? v(VCASE.position) : null }, bots: bots.filter(b => b.active).map(b => ({ i: b.i, alive: b.alive, st: b.state, sees: !!b.sees, p: v(b.pos), d: +b.pos.distanceTo(P.pos).toFixed(1) })), ghosts: HZ.filter(h => h.active).map(h => ({ st: h.state, team: h.team.name })), lamps: LAMPS.length, corpses: CORPSES.length, cps: CORPSES.slice(0, 6).map(c => ({ p: v(c.p), team: TEAMS[c.team].name, ghost: !!c.ghost, done: c.done, riseT: +c.riseT.toFixed(1) })), drops: DROPS.filter(a => a.on).map(a => v(a.g.position)), reserve: Wp.reserve } : null, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), calls: sceneCalls, playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
+      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, hunt: HUNT.on ? { kills: HUNT.kills, signals: HUNT.signals, nights: HUNT.nights, loud: HUNT.loud, evac: EVAC.on ? { p: v(EVAC.p), hold: +EVAC.hold.toFixed(1) } : null, radios: RADIOS.map(r => ({ p: v(r.p), prog: +r.prog.toFixed(2), done: r.done, name: r.name })), hz: HZ.filter(h => h.active).map(h => ({ k: h.kind, st: h.state, alive: h.alive, hp: Math.round(h.hp), p: v(h.pos), d: +h.pos.distanceTo(P.pos).toFixed(1) })), spots: CITY.spots.length, veil: { kills: VEIL.kills, have: VEIL.have, on: VEIL.on, caseOn: VEIL.caseOn, fitT: +VEIL.fitT.toFixed(2), case: VEIL.caseOn ? v(VCASE.position) : null }, bots: bots.filter(b => b.active).map(b => ({ i: b.i, alive: b.alive, st: b.state, sees: !!b.sees, p: v(b.pos), d: +b.pos.distanceTo(P.pos).toFixed(1) })), ghosts: HZ.filter(h => h.active).map(h => ({ st: h.state, team: h.team.name })), lamps: LAMPS.length, corpses: CORPSES.length, cps: CORPSES.slice(0, 6).map(c => ({ p: v(c.p), team: TEAMS[c.team].name, ghost: !!c.ghost, done: c.done, riseT: +c.riseT.toFixed(1) })), drops: DROPS.filter(a => a.on).map(a => v(a.g.position)), reserve: Wp.reserve } : null, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), calls: sceneCalls, att: { sel: Object.assign({}, ATT), mag: Wp.mag, magSize: CW.magSize, reserve: Wp.reserve, fov: CW.fov, adsRate: +CW.adsRate.toFixed(1), recoil: +CW.recoil.toFixed(4), body: +CW.dmg.body.toFixed(1), muzzle: +CW.muzzle[2].toFixed(3), bars: CW.bars.map(v => +v.toFixed(2)) }, playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
         P: { pos: v(P.pos), yaw: +P.yaw.toFixed(2), pitch: +P.pitch.toFixed(2), hp: Math.round(P.hp), alive: P.alive }, weapon: Wp.cur, ads: +Wp.ads.toFixed(2), bolt: +Wp.boltT.toFixed(2), fov: +cam.fov.toFixed(1), mag: Wp.mag, reserve: Wp.reserve, reloading: Wp.reloading,
         bots: bots.map(b => ({ n: b.team.name, pos: v(b.pos), hp: b.hp, alive: b.alive, st: b.state, sees: b.sees, aware: +b.aware.toFixed(2), crouch: +b.crouch.toFixed(2), cover: !!b.cover, shots: b.shots })) });
     } catch (err) { reply({ error: String(err && err.stack || err) }); }

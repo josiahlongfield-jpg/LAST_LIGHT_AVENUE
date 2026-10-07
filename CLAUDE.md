@@ -20,6 +20,11 @@ The whole game ships as **one self-contained HTML file** with every model and so
   glowing violet case; walk over it, then press V to fit it (about a second, no firing). Fitted, every gun gets violet rings, side lines,
   a canister and a glowing mag slot, purple flash and tracers; its rounds kill husks (which burst apart outward from the killing shot, and
   that body never gets up again) but do 60% damage to living soldiers. **The figure** is still there (same rules as Survival, but its scare does 35 damage).
+- **Carbine attachments** (loadout screen, "Carbine attachments" panel with a live 3D preview; saved in localStorage `lla-att`):
+  magazine 20 / 30 / 40 / 60 drum, barrel short / standard / long, optic irons / red dot / holographic / 4x scope (the scope uses the
+  sniper's full-screen `#scope` overlay with a red chevron, class `acog`), grip none / vertical / angled, muzzle flash hider / suppressor.
+  Each option scales the stats in `ATT_SLOTS`. The suppressor swaps the shot sound to `shot_sup0-2`, shrinks the flash, and cuts how far
+  the shot is heard (bots alerted, Hunted noise) from 70 m to 22 m; online, presence `sp` tells other players to play the suppressed sound.
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
   have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
@@ -33,8 +38,8 @@ data/soldier_lp.json     Low-poly soldier used for enemies and other players (bu
 data/city_sounds.json    Every sound as base64 WAV (the editable audio master, ~20 MB)
 data/city_sounds_mp3.json  Same sounds as MP3, which is what the game actually inlines (built by tools/compress_sounds.py)
 tools/                   Python generators: models (knight.py, hd_lib.py, wlib.py, weapons_export.py, lp_soldier.py)
-                         and audio (real_sounds.py, asset_audio.py, horror_audio.py, hunt_audio.py, compress_sounds.py)
-assets/wav, assets/wav2  Source recordings (openly licensed; credits are in the game's "Sound credits" panel)
+                         and audio (real_sounds.py, asset_audio.py, horror_audio.py, hunt_audio.py, supp_audio.py, compress_sounds.py)
+assets/wav, wav2, wav3 Source recordings (wav3: suppressed shots) (openly licensed; credits are in the game's "Sound credits" panel)
 build.py                 Inlines data into the template -> dist/ and test/game.html, then syntax-checks the script with node
 test/run.py, run2.py     Headless Playwright drivers (single player / two players)
 test/three.min.js        three.js r128 for offline tests
@@ -52,7 +57,7 @@ cd data && cp weapon_hd.base.json weapon_hd.json && python3 ../tools/weapons_exp
 ```
 Rebuilding sounds (only when you change the audio tools). Run from `data/`; needs numpy, scipy and ffmpeg with libmp3lame:
 ```
-cd data && python3 ../tools/asset_audio.py && python3 ../tools/horror_audio.py && python3 ../tools/hunt_audio.py && python3 ../tools/compress_sounds.py
+cd data && python3 ../tools/asset_audio.py && python3 ../tools/horror_audio.py && python3 ../tools/hunt_audio.py && python3 ../tools/supp_audio.py && python3 ../tools/compress_sounds.py
 ```
 `real_sounds.py` (gun recordings) also writes into `city_sounds.json`; run it first if you change the guns.
 Every new sound needs a `GAIN` entry in the template, and a credit in the Sound credits panel if it comes from a new source.
@@ -60,7 +65,8 @@ Every new sound needs a `GAIN` entry in the template, and a credit in the Sound 
 ## Template map (search for the `// ====` section headers)
 renderer/sky → materials → static batching (+ layers) → street layout → buildings (fire escapes, roofs) → vehicles → street furniture →
 day/night + lamps + torch + night vision (NV post-process shader `nvMat`) → **the figure** (`FIG`, `buildFigureModel`, `poseFigure`,
-`updateFigure`) → player viewmodels (`WEAPONS`, `RIGS`, reload keyframes `ARMK`, `animateReload`, shotgun shells, pump, bolt, slide) →
+`updateFigure`) → player viewmodels (`WEAPONS`, `RIGS`, carbine attachments: `CARB` (the carbine split into body / front / turrets at load so the barrel can
+slide), `ATT_SLOTS`, `AP` parts, `applyAttachments()`, the loadout picker `renderAtt`/`attPreview`; reload keyframes `ARMK`, `animateReload`, shotgun shells, pump, bolt, slide) →
 audio (`sfx`, positional `sfxAt` with HRTF, occlusion, reverb) → state (`P` player, `Wp` weapon) → collision → enemies (`makeBot`, `updateBot` AI)
 → effects → HUD → menu/input/loadout → survival waves → climbing → weapon actions (`shoot`, `reload`) →
 **Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`; husks: `ghostMat` shader, `HUSK_LOOKS` (one per squad), `buildHusk`,
@@ -99,7 +105,7 @@ The page listens for `postMessage({dbg:'lla', id, cmd, ...args})` and replies `{
 (player, weapon, bots, wave, tod, fig incl. `fig.net`, audio...). Commands: start, reset, set {pos,yaw,pitch,hp,difficulty}, sim {s}
 (advance s seconds at 60 fps without rendering), key {code,ms}, fire {n}, ads, look, ray, weapon, loadout, tune, tod {th}, nv, torch,
 climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {D,state,team} (bring a husk in
-D metres ahead), rise (wake the body nearest you), bot {D} (a Hunted soldier D m ahead), botKill {i}, veil {have,on,kills,fit}, radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
+D metres ahead), rise (wake the body nearest you), bot {D} (a Hunted soldier D m ahead), botKill {i}, veil {have,on,kills,fit}, att {mag,barrel,optic,grip,muzzle}, radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
 aimNet {i,head}, netClock {t}, leaveNet. `test/run.py` and `test/run2.py` wrap this.
 
 Testing tips:
