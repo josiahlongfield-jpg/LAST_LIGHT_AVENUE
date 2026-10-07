@@ -12,10 +12,14 @@ The whole game ships as **one self-contained HTML file** with every model and so
 - **Deathmatch · online:** free-for-all for up to 8 players on a room code. The match is first to 20 kills or 10 minutes, with respawns. Hold Tab for the scoreboard.
 - **Hunted:** the avenue's barricades come down and its cross streets run on into a grid city about 240 x 260 m (built the first time
   the mode is picked). Find three radios (hold E for 6 s, which is loud), then hold out for 60 s at the evac flare until the helicopter comes.
-  Night falls about 20 s in. The horrors: **husks** (dead soldiers lying face down in the streets, about 70 of them, that rise as see-through
-  ghosts of themselves: slow, hunt by sound, stop and fire short inaccurate bursts, club you up close, and drop an ammo can when shot; walking
-  past a body may wake it), **wailers** (crouched on rooftop cornices; if one sees you it screams every husk within 150 m onto you), **the Still** (a tall mannequin that comes out at night and
-  only moves while you aren't looking; the goggles flipping counts as a blink), and **the figure** (same rules as Survival, but its scare does 35 damage).
+  It starts mid-morning, with about 2½ minutes of daylight. **By day** Survival soldiers come for you through the streets (they steer round
+  the blocks with `navDir`): up to 3 / 5 / 7 alive at once, one every ~14 / 9 / 6 s, by difficulty. Every soldier you kill stays where he fell
+  as a body (`bakeCorpse`, one vertex-coloured mesh, up to 40). **At night** each body's ghost (a **husk**, dressed in that soldier's squad kit)
+  gets up out of it within 25 s: they always know where you are, move fast, fire accurate 3–4 round bursts and club you up close. Ordinary rounds
+  pass straight through them. At dawn they lie down and fade, and get up again the next night. **The Veil:** your 6th soldier kill drops a
+  glowing violet case; walk over it, then press V to fit it (about a second, no firing). Fitted, every gun gets violet rings, side lines,
+  a canister and a glowing mag slot, purple flash and tracers; its rounds kill husks (which burst apart outward from the killing shot, and
+  that body never gets up again) but do 60% damage to living soldiers. **The figure** is still there (same rules as Survival, but its scare does 35 damage).
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
   have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
@@ -59,9 +63,9 @@ day/night + lamps + torch + night vision (NV post-process shader `nvMat`) → **
 `updateFigure`) → player viewmodels (`WEAPONS`, `RIGS`, reload keyframes `ARMK`, `animateReload`, shotgun shells, pump, bolt, slide) →
 audio (`sfx`, positional `sfxAt` with HRTF, occlusion, reverb) → state (`P` player, `Wp` weapon) → collision → enemies (`makeBot`, `updateBot` AI)
 → effects → HUD → menu/input/loadout → survival waves → climbing → weapon actions (`shoot`, `reload`) →
-**Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`; husks: `ghostMat` shader, `HUSK_LOOKS`, `buildHusk`,
-`poseHusk`, `updateHusk`, `huskFire`; the bodies `CORPSES`/`placeCorpses`/`huskRise` (instanced); ammo cans `DROPS`; `updateStill`/`updateWailer`,
-radios/`EVAC`, `huntReset`, `updateHunt`) → main loop `step()` →
+**Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`; husks: `ghostMat` shader, `HUSK_LOOKS` (one per squad), `buildHusk`,
+`setLook`, `poseHusk`, `updateHusk`, `huskFire`, `shatterHusk`; the bodies `CORPSES`/`bakeCorpse`/`huskRise`; ammo cans `DROPS`; the Veil
+(`VEIL`, `veilKit` per rig, `veilApply`, `veilFit`, case `VCASE`, `updateVeil`); day soldiers `huntBot`; radios/`EVAC`, `huntReset`, `updateHunt`) → main loop `step()` →
 **online deathmatch** (`NET`, transports, puppets, hits, match clock) → debug channel.
 
 Conventions:
@@ -71,7 +75,8 @@ Conventions:
   removes all of it. `AVE` holds the avenue-only barricades (off in Hunted); `CITY.layer` holds the city (on only in Hunted).
 - Husks share one shader (`ghostMat`, a fresnel rim, rising bands, feet that fade out) but each has its own material instance so it can
   fade in when it rises and fade out when shot. Their kit is baked into vertex colours, one mesh per joint, and they cast no shadow.
-- Enemy bullets (Survival bots and husks) go through `shotAtPlayer(from, sigma)`.
+- Enemy bullets (soldiers and husks) go through `shotAtPlayer(from, sigma)`. In `shoot()`, when the Veil is off a husk in front is
+  skipped (`ghostRipple`) and the round carries on to whatever is behind it.
 - Hunted's horrors path-find with a flow field: `navFlow()` runs a breadth-first search out from the player over a 2 m grid a few times a
   second, and `navDir()` tells a horror which neighbouring cell is closer to you.
 - Player yaw 0 looks down -Z. Bots and puppets face +Z at rotation 0, so a remote player's puppet uses `yaw + PI`.
@@ -93,8 +98,8 @@ Conventions:
 The page listens for `postMessage({dbg:'lla', id, cmd, ...args})` and replies `{dbg:'lla-r', id, r}` with a big state snapshot
 (player, weapon, bots, wave, tod, fig incl. `fig.net`, audio...). Commands: start, reset, set {pos,yaw,pitch,hp,difficulty}, sim {s}
 (advance s seconds at 60 fps without rendering), key {code,ms}, fire {n}, ads, look, ray, weapon, loadout, tune, tod {th}, nv, torch,
-climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {kind,D,state,mem,pose} (bring a husk,
-wailer or still in D metres ahead), rise {alert} (wake the body nearest you), radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
+climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {D,state,team} (bring a husk in
+D metres ahead), rise (wake the body nearest you), bot {D} (a Hunted soldier D m ahead), botKill {i}, veil {have,on,kills,fit}, radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
 aimNet {i,head}, netClock {t}, leaveNet. `test/run.py` and `test/run2.py` wrap this.
 
 Testing tips:
