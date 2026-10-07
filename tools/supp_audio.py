@@ -23,8 +23,8 @@ S = {}
 # carbine: one clean shot, and two slightly retuned copies so a burst doesn't machine-gun the same sample
 c = shots(load("sabacky_silenced_rifle_carbine", D), 0.6)[0]
 for i, r in enumerate([1.0, 1.04, 0.96]): S[f"shot_sup{i}"] = level(rate(c, r))
-# sniper: the take's first shot with its whole echo (the second is cut off by the end of the file, which sounds blunt)
-S["sup_s0"] = level(shots(load("qubodup_silenced_sniper_rifle", D), 1.15, gap=1.0)[0])
+# sniper: the take's second shot (the one the player picked), with its whole echo
+S["sup_s0"] = level(shots(load("qubodup_silenced_sniper_rifle", D), 1.6, gap=1.0)[0])
 # SMG: three different shots of the De Lisle
 for i, s in enumerate(shots(load("delisle_suppressed_3shots", D), 0.6, gap=0.5)[:3]): S[f"sup_m{i}"] = level(s)
 
