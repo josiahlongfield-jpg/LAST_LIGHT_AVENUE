@@ -26,7 +26,7 @@ The whole game ships as **one self-contained HTML file** with every model and so
   Each option scales the stats in `ATT_SLOTS`. The suppressor swaps the shot sound to `shot_sup0-2`, shrinks the flash, and cuts how far
   the shot is heard (bots alerted, Hunted noise) from 70 m to 22 m; online, presence `sp` tells other players to play the suppressed sound.
   The sniper and SMG get a suppressor too (rows under the panel, `SUPX`, `applySuppressors`, saved as `ATT.sx`), each with its own
-  sounds (`Wd.supSnd`: carbine `shot_sup0-2`, sniper `sup_s0-1`, SMG `sup_m0-2`).
+  sounds (`Wd.supSnd`: carbine `sup_m0-2` (De Lisle), sniper `sup_s0-1`, SMG `shot_sup0-2` (Sabacky)).
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
   have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
