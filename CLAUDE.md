@@ -25,6 +25,8 @@ The whole game ships as **one self-contained HTML file** with every model and so
   sniper's full-screen `#scope` overlay with a red chevron, class `acog`), grip none / vertical / angled, muzzle flash hider / suppressor.
   Each option scales the stats in `ATT_SLOTS`. The suppressor swaps the shot sound to `shot_sup0-2`, shrinks the flash, and cuts how far
   the shot is heard (bots alerted, Hunted noise) from 70 m to 22 m; online, presence `sp` tells other players to play the suppressed sound.
+  The sniper and SMG get a suppressor too (rows under the panel, `SUPX`, `applySuppressors`, saved as `ATT.sx`), each with its own
+  sounds (`Wd.supSnd`: carbine `shot_sup0-2`, sniper `sup_s0-1`, SMG `sup_m0-2`).
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
   have to come off every morning. During the scare it is pinned to your view (`pinFigure`).
@@ -39,7 +41,7 @@ data/city_sounds.json    Every sound as base64 WAV (the editable audio master, ~
 data/city_sounds_mp3.json  Same sounds as MP3, which is what the game actually inlines (built by tools/compress_sounds.py)
 tools/                   Python generators: models (knight.py, hd_lib.py, wlib.py, weapons_export.py, lp_soldier.py)
                          and audio (real_sounds.py, asset_audio.py, horror_audio.py, hunt_audio.py, supp_audio.py, compress_sounds.py)
-assets/wav, wav2, wav3 Source recordings (wav3: suppressed shots) (openly licensed; credits are in the game's "Sound credits" panel)
+assets/wav, wav2, wav3 Source recordings (wav3: suppressed shots; the Sonniss De Lisle take is trimmed to three shots, keep raw bundle WAVs out of git) (openly licensed; credits are in the game's "Sound credits" panel)
 build.py                 Inlines data into the template -> dist/ and test/game.html, then syntax-checks the script with node
 test/run.py, run2.py     Headless Playwright drivers (single player / two players)
 test/three.min.js        three.js r128 for offline tests
@@ -105,7 +107,7 @@ The page listens for `postMessage({dbg:'lla', id, cmd, ...args})` and replies `{
 (player, weapon, bots, wave, tod, fig incl. `fig.net`, audio...). Commands: start, reset, set {pos,yaw,pitch,hp,difficulty}, sim {s}
 (advance s seconds at 60 fps without rendering), key {code,ms}, fire {n}, ads, look, ray, weapon, loadout, tune, tod {th}, nv, torch,
 climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {D,state,team} (bring a husk in
-D metres ahead), rise (wake the body nearest you), bot {D} (a Hunted soldier D m ahead), botKill {i}, veil {have,on,kills,fit}, att {mag,barrel,optic,grip,muzzle}, radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
+D metres ahead), rise (wake the body nearest you), bot {D} (a Hunted soldier D m ahead), botKill {i}, veil {have,on,kills,fit}, att {mag,barrel,optic,grip,muzzle,sx:{sniper,smg}}, radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
 aimNet {i,head}, netClock {t}, leaveNet. `test/run.py` and `test/run2.py` wrap this.
 
 Testing tips:
