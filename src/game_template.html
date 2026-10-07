@@ -1787,7 +1787,7 @@ const SND = __SOUNDS__;
   }
   // suppressors for the sniper and the SMG: a can over the muzzle, their own quiet shots, and the flash moved to the can's end
   const SUPX = {
-    sniper: { r: 0.022, len: 0.2, back: 0.03, snd: ['sup_s0', 'sup_s1'] },
+    sniper: { r: 0.022, len: 0.2, back: 0.03, snd: ['sup_s0'] },
     smg: { r: 0.018, len: 0.15, back: 0.005, snd: SUP_SND } };
   CW.supSnd = ['sup_m0', 'sup_m1', 'sup_m2'];      // the carbine takes the De Lisle, the SMG the carbine recording
   for (const k in SUPX) {
@@ -1973,7 +1973,7 @@ const SND = __SOUNDS__;
   // ================================================================ audio
   let actx = null, master = null, bufs = {}, volume = 0.8;
   const GAIN = { shotfar: 0.8, step: 0.3, tink: 0.16, ping: 0.6, land: 0.45, hit: 0.5, hit_kill: 0.6, raise: 0.4, lower: 0.35, crack: 0.55, hurt: 0.8, bodyhit: 0.6, magdrop: 0.4,
-    shot_c0: 0.62, shot_c1: 0.62, shot_c2: 0.62, shot_sup0: 0.8, shot_sup1: 0.8, shot_sup2: 0.8, sup_s0: 1.8, sup_s1: 1.8, sup_m0: 1.0, sup_m1: 1.0, sup_m2: 1.0, far_c: 0.75, shot_s: 0.9, far_s: 0.85, dry_c: 0.55, dry_s: 0.55,
+    shot_c0: 0.62, shot_c1: 0.62, shot_c2: 0.62, shot_sup0: 0.8, shot_sup1: 0.8, shot_sup2: 0.8, sup_s0: 2.4, sup_m0: 1.0, sup_m1: 1.0, sup_m2: 1.0, far_c: 0.75, shot_s: 0.9, far_s: 0.85, dry_c: 0.55, dry_s: 0.55,
     c_magout: 0.6, c_magin: 0.75, c_magin2: 0.75, c_boltrel: 0.8, s_boltopen: 0.75, s_boltclose: 0.8, s_magout: 0.65, s_magin: 0.7, s_maglock: 0.7, s_reloadclose: 0.75,
     case_c0: 0.22, case_c1: 0.22, case_c2: 0.22, case_s0: 0.3, case_s1: 0.3,
     shot_p: 0.6, far_p: 0.6, dry_p: 0.55, p_magout: 0.55, p_magin: 0.7, p_slide: 0.75, p_slide2: 0.75, case_p0: 0.2, case_p1: 0.2,
