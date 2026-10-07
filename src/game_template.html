@@ -84,6 +84,10 @@ html, body { margin: 0; height: 100%; background: var(--panel-solid); color: var
 #feed { position: absolute; right: 20px; top: 20px; display: grid; gap: 6px; justify-items: end; }
 #feed div { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; font: 600 .9rem var(--display); letter-spacing: .06em; text-transform: uppercase; transition: opacity .4s; }
 #feed b { font-weight: 700; }
+#marks { position: absolute; inset: 0; pointer-events: none; }
+.mk { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 3px; margin: -8px 0 0 -60px; width: 120px; }
+.mk i { width: 12px; height: 12px; border: 2px solid var(--amber); transform: rotate(45deg); box-shadow: 0 0 6px rgba(0,0,0,.6); }
+.mk span { font: 600 .78rem var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--amber); text-shadow: 0 1px 3px #000; }
 #prompt { position: absolute; left: 50%; top: 61%; transform: translateX(-50%); font: 600 1.05rem var(--display);
   letter-spacing: .12em; text-transform: uppercase; color: var(--amber); text-shadow: 0 1px 3px rgba(0,0,0,.9); opacity: 0; transition: opacity .15s; white-space: nowrap; }
 #toast { position: absolute; left: 50%; top: 20%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity .25s;
@@ -175,6 +179,7 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
     </div>
     <div class="panel" id="roster" aria-label="Enemy roster"></div>
     <div id="feed"></div>
+    <div id="marks"></div>
     <div class="panel" id="health">
       <div class="label">Health</div>
       <div class="row"><span class="n" id="hp">100</span></div>
@@ -201,7 +206,7 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
         <div><b id="st-hs">0</b><span>Headshots</span></div>
       </div>
       <div class="modes" id="modes">
-        <span class="seg" id="mode"><button type="button" data-m="solo" aria-pressed="true">Survival</button><button type="button" data-m="dm" aria-pressed="false">Deathmatch · online</button></span>
+        <span class="seg" id="mode"><button type="button" data-m="solo" aria-pressed="true">Survival</button><button type="button" data-m="hunt" aria-pressed="false">Hunted</button><button type="button" data-m="dm" aria-pressed="false">Deathmatch · online</button></span>
         <div id="netbox" hidden>
           <div class="net-row"><label for="callsign">Callsign</label><input id="callsign" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Your name"></div>
           <div class="net-row"><span>Colour</span><div class="swatches" id="swatches"></div></div>
@@ -493,13 +498,17 @@ const SND = __SOUNDS__;
   const colliders = [], shootables = [], occluders = [], covers = [];
   const LADDERS = [], ELEV = [], LAMPS = [];      // climbable fire escapes, and the raised floors (platforms, roofs) you can stand on
   const BATCH = new Map();
+  // layers: scenery that only exists in some modes (the avenue's barricades; the Hunted city). Batches, colliders, bullet proxies,
+  // cover spots and lamps built inside layerBuild() belong to that layer and come and go with setLayer().
+  let LAYER = null;
+  function makeLayer(name) { const g = new THREE.Group(); g.name = name; scene.add(g); return { name, g, on: true, colliders: [], shoot: [], occl: [], covers: [], lamps: [] }; }
   const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new V3(), _p = new V3();
   function xf(x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) { _e.set(rx, ry, rz); _q.setFromEuler(_e); return new THREE.Matrix4().compose(new V3(x, y, z), _q.clone(), new V3(sx, sy, sz)); }
   function vis(geo, m, matrix, opts = {}) {
     const g = (geo.index ? geo.toNonIndexed() : geo.clone()); g.applyMatrix4(matrix);
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-    const key = m.uuid + (opts.cast === false ? ':n' : ':c');
-    let b = BATCH.get(key); if (!b) { b = { m, cast: opts.cast !== false, list: [] }; BATCH.set(key, b); }
+    const key = (LAYER ? LAYER.name + ':' : '') + m.uuid + (opts.cast === false ? ':n' : ':c');
+    let b = BATCH.get(key); if (!b) { b = { m, cast: opts.cast !== false, list: [], layer: LAYER }; BATCH.set(key, b); }
     b.list.push(g);
   }
   // shorthand: place a box (size w,h,d) whose base sits at y0, optional rotation, optional parent matrix
@@ -514,14 +523,14 @@ const SND = __SOUNDS__;
     vis(geo, m, mx, o);
   }
   function flushBatches() {
-    for (const { m, cast, list } of BATCH.values()) {
+    for (const { m, cast, list, layer } of BATCH.values()) {
       let n = 0; for (const g of list) n += g.attributes.position.count;
       const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2); let o = 0;
       for (const g of list) { pos.set(g.attributes.position.array, o * 3); nrm.set(g.attributes.normal.array, o * 3); uv.set(g.attributes.uv.array, o * 2); o += g.attributes.position.count; }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
       geo.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geo, m); mesh.castShadow = cast; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; scene.add(mesh);
+      const mesh = new THREE.Mesh(geo, m); mesh.castShadow = cast; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; (layer ? layer.g : scene).add(mesh);
     }
     BATCH.clear();
   }
@@ -530,12 +539,27 @@ const SND = __SOUNDS__;
   function proxy(w, h, d, x, y0, z, ry, surface, o = {}) {
     const mesh = new THREE.Mesh(proxyGeo, M.steel); mesh.visible = false;
     mesh.scale.set(w, h, d); mesh.position.set(x, y0 + h / 2, z); mesh.rotation.y = ry || 0;
-    mesh.userData.surface = surface; scene.add(mesh); mesh.updateMatrixWorld(true);
+    mesh.userData.surface = surface; (LAYER ? LAYER.g : scene).add(mesh); mesh.updateMatrixWorld(true);
     if (o.shoot !== false) shootables.push(mesh);
     if (o.occlude !== false) occluders.push(mesh);
     return mesh;
   }
   function solid(minX, maxX, minY, maxY, minZ, maxZ) { colliders.push({ minX, maxX, minY, maxY, minZ, maxZ }); }
+  function layerBuild(L, fn) {
+    const prev = LAYER, n = [colliders.length, shootables.length, occluders.length, covers.length, LAMPS.length]; LAYER = L;
+    try { fn(); } finally { LAYER = prev; }
+    L.colliders.push(...colliders.slice(n[0])); L.shoot.push(...shootables.slice(n[1])); L.occl.push(...occluders.slice(n[2])); L.covers.push(...covers.slice(n[3])); L.lamps.push(...LAMPS.slice(n[4]));
+  }
+  function setLayer(L, on) {
+    L.g.visible = on;
+    if (L.on === on) return; L.on = on;
+    for (const [arr, items] of [[colliders, L.colliders], [shootables, L.shoot], [occluders, L.occl], [covers, L.covers], [LAMPS, L.lamps]]) {
+      const set = new Set(items);
+      if (on) arr.push(...items); else for (let i = arr.length - 1; i >= 0; i--) if (set.has(arr[i])) arr.splice(i, 1);
+    }
+    for (const m of L.shoot) m.visible = false;
+  }
+  const AVE = makeLayer('avenue-only'), AVE_BLD = [];
   function solidRot(x, z, hx, hz, ry, h, y0 = 0) {     // AABB around a rotated footprint
     const c = Math.abs(Math.cos(ry)), s = Math.abs(Math.sin(ry));
     const ex = hx * c + hz * s, ez = hx * s + hz * c;
@@ -634,6 +658,7 @@ const SND = __SOUNDS__;
   }
   function building(side, z0, z1, h, f, climb) {
     const w = z1 - z0, depth = 22, x = side * (BLD + depth / 2), zc = (z0 + z1) / 2, face = side * BLD;
+    AVE_BLD.push({ minX: Math.min(face, side * (BLD + depth)), maxX: Math.max(face, side * (BLD + depth)), minZ: z0, maxZ: z1, h });
     vgeo(scaleUV(new THREE.BoxGeometry(depth, h, w), w / 6, h / 6.4), FACADE_MATS[f], x, h / 2, zc);
     proxy(depth, h, w, x, 0, zc, 0, 'concrete');
     vbox(depth - 0.4, 0.08, w - 0.1, x + side * 0.2, h, zc, ROOF_MAT, { cast: false });      // tar-and-gravel roof
@@ -709,8 +734,10 @@ const SND = __SOUNDS__;
   // cross streets continue between buildings, closed off by wrecks
   for (const c of CROSS) for (const side of [-1, 1]) {
     vgeo(scaleUV(new THREE.BoxGeometry(60, 0.02, CROSS_HALF * 2), 4, 1), M.asphalt, side * 44, 0.005, c, { cast: false });
-    block(2.5, 3.0, 9, side * 22.5, 0, c, M.rust, { ry: side * 0.15, surface: 'steel' });
-    for (let k = -3; k <= 3; k++) vbox(2.54, 2.9, 0.08, side * 22.5, 0.05, c + k * 1.2, M.soot, { ry: side * 0.15, cast: false });
+    layerBuild(AVE, () => {      // in Hunted the wreck is gone and the street runs on into the city
+      block(2.5, 3.0, 9, side * 22.5, 0, c, M.rust, { ry: side * 0.15, surface: 'steel' });
+      for (let k = -3; k <= 3; k++) vbox(2.54, 2.9, 0.08, side * 22.5, 0.05, c + k * 1.2, M.soot, { ry: side * 0.15, cast: false });
+    });
     block(2.4, 1.2, 4.6, side * 20, 0, c + 3.5, M.burnt, { ry: 0.6, surface: 'steel', cover: true });
   }
 
@@ -803,7 +830,7 @@ const SND = __SOUNDS__;
     proxy(2.6, 2.6, 12, x, 0.3, z, ry, 'steel');
   })(1.5, -2, 0.35);
   // far ends: overturned bus, box truck and barricades
-  for (const e of [-1, 1]) {
+  for (const e of [-1, 1]) layerBuild(AVE, () => {
     const z = e * 80;
     block(12, 2.9, 3, -3, 0, z, mat(e > 0 ? 0x2c4c7a : 0x6a6a5c, 0.6, 0.3), { ry: 0.08, surface: 'steel' });
     for (let k = -5; k <= 5; k++) vbox(0.15, 0.9, 3.04, -3 + k * 1.05, 1.4, z, M.glass, { ry: 0.08, cast: false });
@@ -811,7 +838,7 @@ const SND = __SOUNDS__;
     vbox(1.8, 2.0, 2.2, 9.2, 0, z + e * 0.4, mat(0x7a1f1f, 0.5, 0.3), { ry: -0.4 });
     block(3.4, 0.85, 0.6, -10.5, 0, z - e * 2, M.jersey, { ry: 0.2 });
     solid(-30, 30, 0, 4, e > 0 ? 77 : -90, e > 0 ? 90 : -77);
-  }
+  });
 
   // ================================================================ street furniture & debris
   function jersey(x, z, ry) {
@@ -938,8 +965,8 @@ const SND = __SOUNDS__;
   for (const a of AMMO) { block(1.0, 0.5, 0.6, a.x, 0, a.z, M.ammo, { surface: 'wood' }); vbox(1.02, 0.06, 0.62, a.x, 0.44, a.z, M.sign, { cast: false }); vbox(0.25, 0.08, 0.05, a.x, 0.25, a.z + 0.31, mat(0xd9c55a, 0.6), { cast: false }); }
   flushBatches();
   // ================================================================ day / night cycle, street lamps, weapon torch, night vision
-  // the sun travels down the avenue: it rises behind your start, sets at the far end, and a full day takes 12 minutes
-  const TOD = { th: 0.2, speed: Math.PI * 2 / 720, dark: 0, sunW: 1, skyT: 0 };
+  // the sun travels down the avenue: it rises behind your start, sets at the far end, and a full day takes 6 minutes
+  const TOD = { th: 0.2, speed: Math.PI * 2 / 360, dark: 0, sunW: 1, skyT: 0 };
   const LIGHTDIR = new V3().copy(SUN);
   const col = h => new THREE.Color(h);
   const PAL = {
@@ -971,13 +998,14 @@ const SND = __SOUNDS__;
   const poolTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
     const r = g.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, 'rgba(255,200,130,0.9)'); r.addColorStop(0.45, 'rgba(255,170,90,0.35)'); r.addColorStop(1, 'rgba(255,150,80,0)');
     g.fillStyle = r; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
-  for (const L of LAMPS) {
+  function setupLamp(L, parent = scene) {
     L.lens = new THREE.MeshBasicMaterial({ color: 0x3a3832, toneMapped: false });
-    const lens = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.22), L.lens); lens.position.copy(L.pos); scene.add(lens);
+    const lens = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.22), L.lens); lens.position.copy(L.pos); parent.add(lens);
     L.poolMat = new THREE.MeshBasicMaterial({ map: poolTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -5 });
-    const pool = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), L.poolMat); pool.rotation.x = -Math.PI / 2; pool.position.set(L.pos.x, 0.03, L.pos.z); scene.add(pool);
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), L.poolMat); pool.rotation.x = -Math.PI / 2; pool.position.set(L.pos.x, 0.03, L.pos.z); parent.add(pool);
     const r = Math.random(); L.kind = r < 0.14 ? 'dead' : r < 0.4 ? 'faulty' : 'ok'; L.at = rand(0.3, 0.6); L.level = 0; L.fl = 1; L.flT = 0;
   }
+  for (const L of LAMPS) setupLamp(L);
   const lampLights = [];
   for (let i = 0; i < 4; i++) { const l = new THREE.PointLight(0xffbf78, 0, 21, 2); scene.add(l); lampLights.push(l); }
   // weapon torch (T): a cone of light from the gun; enemies can see it too
@@ -1014,6 +1042,7 @@ const SND = __SOUNDS__;
       skyCol.needsUpdate = true;
     }
     scene.fog.color.copy(P_.fog); scene.fog.far = P_.far; scene.fog.near = lerp(35, 18, TOD.dark);
+    if (HUNT.on) { scene.fog.near = lerp(30, 6, TOD.dark); scene.fog.far = Math.min(P_.far, lerp(P_.far, 85, TOD.dark)); }      // the city at night: you hear them long before you see them
     renderer.toneMappingExposure = P_.exp;
     hemi.color.copy(P_.hs); hemi.groundColor.copy(P_.hg); hemi.intensity = P_.hi;
     // key light: the sun by day, the moon by night
@@ -1061,11 +1090,11 @@ const SND = __SOUNDS__;
     return v;
   }
   // night vision (N): image intensifier, green phosphor, grain, tube vignette
-  const NV = { on: false, t: 0, rt: null, want: false };
+  const NV = { on: false, t: 0, rt: null, want: false, blindTold: false };
   const nvMat = new THREE.ShaderMaterial({
-    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGain: { value: 6 }, uNoise: { value: 0.16 }, uTear: { value: 0 }, uAspect: { value: 1.6 }, uPx: { value: new THREE.Vector2(1 / 1600, 1 / 900) } },
+    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGain: { value: 6 }, uNoise: { value: 0.16 }, uTear: { value: 0 }, uBlind: { value: 0 }, uAspect: { value: 1.6 }, uPx: { value: new THREE.Vector2(1 / 1600, 1 / 900) } },
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime, uGain, uAspect, uNoise, uTear; uniform vec2 uPx; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime, uGain, uAspect, uNoise, uTear, uBlind; uniform vec2 uPx; varying vec2 vUv;
       float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
       void main(){
@@ -1077,12 +1106,13 @@ const SND = __SOUNDS__;
         float l = lum(c) + max(0.0, b / 8.0 - 0.25) * 0.8;
         l = 1.0 - exp(-l * uGain);
         float n = hash(floor(vUv / uPx / 1.5) + fract(uTime * 13.0) * 91.0) - 0.5;
-        l = clamp(l + n * uNoise, 0.0, 1.0);
+        l = mix(l, 1.0, uBlind);                                      // daylight: the intensifier saturates to a white-green glare
+        l = clamp(l + n * (uNoise + uBlind * 0.25), 0.0, 1.0);
         l *= 0.94 + 0.06 * sin(vUv.y / uPx.y * 1.4);
         vec2 d = (vUv - 0.5) * vec2(uAspect, 1.0);
         float r = length(d);
         float mask = smoothstep(0.86, 0.66, r) * (1.0 - 0.3 * r);
-        vec3 g = vec3(0.16, 1.0, 0.34) * l + vec3(0.0, 0.025, 0.01);
+        vec3 g = mix(vec3(0.16, 1.0, 0.34), vec3(0.85, 1.0, 0.88), uBlind * 0.7) * l + vec3(0.0, 0.025, 0.01);
         gl_FragColor = vec4(pow(g * mask, vec3(0.9)), 1.0);
       }`,
     depthTest: false, depthWrite: false
@@ -1098,15 +1128,15 @@ const SND = __SOUNDS__;
   }
   function toggleNV() {
     if (!NV.want && FIG.nvLock > 0) { sfx('nv_glitch', 0.5, 1.2, 0, 0, 0); toast('Night vision rebooting…', 1.2); return; }
-    NV.want = !NV.want; NV.t = 0.0001;
+    NV.want = !NV.want; NV.t = 0.0001; NV.blindTold = false;
     sfx(NV.want ? 'nvg_on' : 'nvg_off', 1); $('nvlabel').hidden = !NV.want;
   }
   function toggleTorch() { torchOn = !torchOn; sfx('torch', 0.8, torchOn ? 1.1 : 0.95); }
   // ================================================================ the thing you only see through night vision
   // Tall, thin, faceless. It is only ever drawn while the goggles are down. It never moves while you're looking.
   // Every time you flip the goggles up and back down after seeing it, it is closer. When it's close enough, it's right there.
-  // Leave the goggles on and it moves anyway, every 30 to 50 seconds, so you can't just wait the night out.
-  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, stalkT: 40, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
+  // Daylight burns out the goggles, so every night you have to put them on again. It remembers how close it got.
+  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
   // ================================================================ the figure's body: starved, too tall, too long in the arm, and it smiles
   // Built from tubes and ellipsoids, then merged per moving part. Shading is baked into vertex colours as if lit by the goggles'
   // own IR illuminator (from the viewer), so it reads through the intensifier at any distance, with black sockets and a black mouth.
@@ -1349,13 +1379,14 @@ const SND = __SOUNDS__;
     for (let k = 0; k < 14 && !best; k++) {
       const a = P.yaw + rand(-0.4, 0.4) * (k < 7 ? 0.6 : 1), d = FIG.D * rand(0.92, 1.08);
       const p = new V3(P.pos.x - Math.sin(a) * d, 0, P.pos.z - Math.cos(a) * d);
-      p.x = clamp(p.x, -11.5, 11.5); p.z = clamp(p.z, -ZMAX + 1, ZMAX - 1);
+      if (HUNT.on) { p.x = clamp(p.x, -CITY.X + 2, CITY.X - 2); p.z = clamp(p.z, -CITY.Z + 2, CITY.Z - 2); if (!navFreeAt(p.x, p.z) && k < 13) continue; }      // the city: out in a street, not inside a building
+      else { p.x = clamp(p.x, -11.5, 11.5); p.z = clamp(p.z, -ZMAX + 1, ZMAX - 1); }
       p.y = support(p, 0.3);
       if (clearLine(cam.position, tmp.copy(p).add(_fv.set(0, 2.3, 0))) && clearLine(cam.position, tmp.copy(p).add(_fv.set(0, 1.2, 0)))) best = p;
       else if (k === 13) best = p;
     }
     FIG.g.position.copy(best); FIG.tiltWant = rand(-0.45, 0.45); FIG.tilt = FIG.tiltWant;
-    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.stalkT = rand(32, 50); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
+    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
   }
   // it won't be stared at, and it won't be walked up to. Either way it's simply not there any more, until the next time the goggles come down.
   function vanishFigure(why) {
@@ -1394,32 +1425,24 @@ const SND = __SOUNDS__;
   }
   function figureCloser() {
     if (FIG.seen <= 0.35) return false;
-    FIG.D *= 0.55; if (FIG.D < 9) scareFigure(); else placeFigure();
+    FIG.D *= 0.45; if (FIG.D < 9) scareFigure(); else placeFigure();
     return true;
   }
   function updateFigure(dt) {
-    const night = TOD.dark > 0.7 && inRun && P.alive && !gameOver;
+    const night = TOD.dark > 0.45 && inRun && P.alive && !gameOver;     // as soon as the goggles stop blinding you
     FIG.cool = Math.max(0, FIG.cool - dt); FIG.nvLock = Math.max(0, FIG.nvLock - dt); FIG.glitch = Math.max(0, FIG.glitch - dt);
-    if (!night) { FIG.active = false; FIG.g.visible = false; FIG.nvWas = NV.on; FIG.heartRate = Math.max(0, FIG.heartRate - dt * 0.3); return; }
-    if (!FIG.active && FIG.cool <= 0) { FIG.active = true; FIG.D = 72; FIG.seen = 0; placeFigure(); }
+    if (!night) { FIG.active = false; FIG.g.visible = false; if (!NV.on) FIG.nvWas = false; FIG.heartRate = Math.max(0, FIG.heartRate - dt * 0.3); return; }
+    if (!FIG.active && FIG.cool <= 0) { FIG.active = true; placeFigure(); }      // D and seen carry over from last night
     // goggles just came down: if you'd seen it, it's closer now
     if (NV.on && !FIG.nvWas && FIG.active) { figureCloser(); FIG.seen = 0; }
     FIG.nvWas = NV.on;
-    // leave the goggles on and it doesn't wait for you: every so often the tube flickers, and it has moved
-    if (NV.on && FIG.active && FIG.scareT === 0) {
-      FIG.stalkT -= dt;
-      if (FIG.stalkT <= 0) {
-        FIG.glitch = Math.max(FIG.glitch, 0.3); sfx('nv_glitch', 0.4, 1.2, 0, 0, 0);
-        if (!figureCloser()) placeFigure();    // you never noticed it: it steps back into view, no nearer
-        FIG.seen = 0;
-      }
-    }
     // the scare: a second and a half in your face, then the goggles short out and it's gone
     if (FIG.scareT > 0) {
       FIG.scareT += dt;
       if (FIG.scareT > 1.4) {
         FIG.scareT = 0; FIG.active = false; FIG.cool = rand(70, 110); FIG.D = 72; FIG.g.visible = false;
         if (NV.want) toggleNV(); FIG.nvLock = 7; sfx('nv_glitch', 1, 1, 0, 0, 0); toast('Night vision failed<small>The tube is rebooting…</small>', 3);
+        if (HUNT.on) damagePlayer(Math.round(35 * DIFF[difficulty].dmg), { kind: 'figure', pos: P.pos.clone() }, 'figure');      // in the city it doesn't only frighten you
         return;
       }
     }
@@ -1520,9 +1543,9 @@ const SND = __SOUNDS__;
       hip: 0.022, ads: 0.003, move: [0.018, 0.006], dmg: { head: 70, body: 25, leg: 19 }, recoil: 0.009, kick: 0.45, reload: [1.9, 2.4], tracerEvery: 4,
       muzzle: SM.muzzle, port: SM.port, snd: { shot: ['shot_m0', 'shot_m1'], far: 'far_m', dry: 'dry_m', cases: ['case_p0', 'case_p1'] }, casing: 0.8,
       HIP: { pos: new V3(0.14, -0.17, -0.38), rot: new THREE.Euler(0.01, 0.04, 0.0) }, ADS: { pos: new V3(0, -SM.sightY + 0.001, -0.2), rot: new THREE.Euler(0, 0, 0) }, SPRINT: SPRINT_DEF },
-    shotgun: { key: 'shotgun', irons: true, name: 'Shotgun', cal: '12 ga', blurb: 'Pump action, nine pellets. Devastating up close.', bars: [0.95, 0.2, 0.25, 0.55],
+    shotgun: { key: 'shotgun', irons: true, name: 'Shotgun', cal: '12 ga', blurb: 'Pump action, nine pellets. Devastating up close.', bars: [1.0, 0.2, 0.3, 0.55],
       magSize: 7, reserveMax: 35, interval: 0.15, auto: false, adsRate: 13, fov: 60, vfov: 48, pump: 0.62, pellets: 9, shells: true,
-      hip: 0.06, ads: 0.045, move: [0.01, 0.005], dmg: { head: 30, body: 17, leg: 12 }, recoil: 0.055, kick: 1.3, reload: [0, 0], tracerEvery: 1,
+      hip: 0.05, ads: 0.035, move: [0.01, 0.005], dmg: { head: 45, body: 26, leg: 18 }, recoil: 0.055, kick: 1.3, reload: [0, 0], tracerEvery: 1,
       muzzle: SG.muzzle, port: SG.port, snd: { shot: ['shot_g'], far: 'far_g', dry: 'dry_g', cases: ['case_g0', 'case_g1'] }, casing: 0,
       HIP: { pos: new V3(0.15, -0.18, -0.44), rot: new THREE.Euler(0.01, 0.035, 0.0) }, ADS: { pos: new V3(0, -SG.sightY - 0.004, -0.22), rot: new THREE.Euler(0, 0, 0) }, SPRINT: SPRINT_DEF },
     pistol: { key: 'pistol', irons: true, name: 'Pistol', cal: '9mm', blurb: 'Quick to draw, quick to aim. Slide locks back when empty.', bars: [0.35, 0.55, 0.4, 1.0],
@@ -1761,7 +1784,9 @@ const SND = __SOUNDS__;
     hurt0: 0.7, hurt1: 0.7, hurt2: 0.7, hurt3: 0.7, flesh0: 0.6, flesh1: 0.6, flesh2: 0.6, flesh3: 0.6, crack0: 0.6, crack1: 0.6, crack2: 0.6,
     ric0: 0.45, ric1: 0.45, ric2: 0.45, ric3: 0.45, imp_con0: 0.5, imp_con1: 0.5, imp_con2: 0.5, imp_con3: 0.5, imp_met0: 0.45, imp_met1: 0.45,
     siren: 0.5, alarm: 0.35, bells: 0.4,
-    fig_step0: 0.55, fig_step1: 0.55, fig_step2: 0.55, fig_step3: 0.55, fig_breath0: 0.5, fig_breath1: 0.5, fig_breath2: 0.5, fig_sting: 0.95, heart: 0.6, nv_glitch: 0.45 };
+    fig_step0: 0.55, fig_step1: 0.55, fig_step2: 0.55, fig_step3: 0.55, fig_breath0: 0.5, fig_breath1: 0.5, fig_breath2: 0.5, fig_sting: 0.95, heart: 0.6, nv_glitch: 0.45,
+    crawl_step0: 0.4, crawl_step1: 0.4, crawl_step2: 0.4, crawl_step3: 0.4, crawl_screech0: 0.75, crawl_screech1: 0.75, crawl_screech2: 0.75, crawl_hiss0: 0.4, crawl_hiss1: 0.4,
+    crawl_lunge: 0.8, crawl_die: 0.7, still_scrape0: 0.7, still_scrape1: 0.7, still_hit: 1.0, wail_in: 0.6, wail: 1.0, radio_tx: 0.45, radio_ok: 0.6 };
   // real recordings, scheduled against reload / bolt progress: [progress, sound or [variants], gain, extra delay, only when reloading from empty]
   const RELOAD_SFX = {
     carbine: [[0.07, 'c_magout', 1], [0.53, ['c_magin', 'c_magin2'], 1], [0.8, 'c_boltrel', 1, 0, true]],
@@ -1869,6 +1894,7 @@ const SND = __SOUNDS__;
     store: { sniper: { mag: 5, reserve: 30 } }, rEv: 0, bEv: 0, boltT: 0, boltOpen: false, boltShut: false, switchT: 0, switchTo: null, adsTime: 0, breath: 4, breathHeld: false,
     loadout: ['carbine', 'sniper'], slideT: 0, slideLocked: false, pumpT: 0, pEv: 0, shellPhase: null, stopShells: false };
   const W = () => WEAPONS[Wp.cur];
+  const HUNT = { on: false, built: false };      // Hunted mode (the open city and its horrors); filled in by the Hunted section
   const stats = { shots: 0, hits: 0, kills: 0, heads: 0, t: 0 };
   const keys = new Set();
   let sens = 1, adsSens = 0.55, playing = false, locked = false, noLock = false, lockWorked = false, gameOver = false, difficulty = 1, simTime = 0;
@@ -1881,6 +1907,7 @@ const SND = __SOUNDS__;
       for (const r of ELEV) if (p.y > r.y - 0.7 && p.x > r.minX - 0.8 && p.x < r.maxX + 0.8 && p.z > r.minZ - 0.8 && p.z < r.maxZ + 0.8 && (!best || r.y > best.y)) best = r;
       if (best) { p.x = clamp(p.x, best.minX, best.maxX); p.z = clamp(p.z, best.minZ, best.maxZ); return; }
     }
+    if (HUNT.on) { p.x = clamp(p.x, -CITY.X, CITY.X); p.z = clamp(p.z, -CITY.Z, CITY.Z); return; }      // the open city: buildings are solid, so only its edge needs clamping
     const xm = inCross(p.z) ? 19.5 : BLD - 0.35;
     p.x = clamp(p.x, -xm, xm); p.z = clamp(p.z, -ZMAX, ZMAX);
   }
@@ -2076,8 +2103,9 @@ const SND = __SOUNDS__;
     if (b.marksman || b.shots % 2 === 0) tracer(from, end, true);
   }
 
+  let dbgGod = false;      // debug channel: take no damage (for long automated runs)
   function damagePlayer(dmg, b, why) {
-    if (!P.alive || gameOver) return;
+    if (!P.alive || gameOver || dbgGod) return;
     P.hp -= dmg; P.lastHit = simTime;
     sfx('hurt' + Math.floor(Math.random() * 4), 0.9, rand(0.95, 1.05)); if (b) sfxAt('flesh' + Math.floor(Math.random() * 4), playerChest(), 0.7, 1, { occlude: false, ref: 1 }); hurtFlash = 0.9;
     Wp.punchP += rand(0.01, 0.03); Wp.punchY += rand(-0.02, 0.02);
@@ -2475,10 +2503,13 @@ const SND = __SOUNDS__;
       playing = false;
       const cleared = Math.max(0, WAVE.n - 1);
       if (cleared > WAVE.best) { WAVE.best = cleared; try { localStorage.setItem('lla-best', String(WAVE.best)); } catch (_) {} }
+      if (HUNT.on) { $('mt').innerHTML = won ? 'You got <span>out</span>' : 'You’re <span>down</span>'; $('mdesc').textContent = huntEndText(won, killer); }
+      else {
       $('mt').innerHTML = 'You’re <span>down</span>';
       $('mdesc').textContent = `${killer ? killer.team.name + ' got you' : 'The fall finished you'} on wave ${WAVE.n} at ${clockText()}. You cleared ${cleared} wave${cleared === 1 ? '' : 's'}${WAVE.best ? ` (best: ${WAVE.best})` : ''}. Try a rooftop, and don't forget the night vision.`;
+      }
       $('st-time').textContent = fmtT(stats.t); $('st-kills').textContent = stats.kills; $('st-acc').textContent = acc + '%'; $('st-hs').textContent = stats.heads;
-      inRun = false; $('stats').hidden = false; showBrief(false); $('loadout').hidden = false; $('fine').textContent = 'Starts a fresh run at sunset. Pick a different loadout above if you like.';
+      inRun = false; $('stats').hidden = false; showBrief(false); $('loadout').hidden = false; $('fine').textContent = HUNT.on ? 'Starts a fresh night in the city. Pick a different loadout above if you like.' : 'Starts a fresh run at sunset. Pick a different loadout above if you like.';
       setMenu(true, 'Play again');
     }, won ? 1600 : 1300);
   }
@@ -2494,11 +2525,13 @@ const SND = __SOUNDS__;
     for (const c of covers) c.claimed = null;
     bots.forEach(b => { resetBot(b); benchBot(b); });
     WAVE.n = 0; WAVE.phase = 'pre'; WAVE.t = 5; TOD.th = 0.2; TOD.skyT = 0; torchOn = false; NV.want = NV.on = false; NV.t = 0; $('nvlabel').hidden = true;
+    FIG.D = 72; FIG.seen = 0; FIG.cool = 0; FIG.active = false; FIG.scareT = 0; FIG.nvWas = false;    // a new run: it starts far away again
     P.climb = null; P.highT = 0; updateDayNight(0);
     Object.assign(FIG, { gone: false, stare: 0, jaw: 0.06, reach: 0, twY: 0, twP: 0, active: false, cool: 0, D: 72, seen: 0, events: [], heartRate: 0, scareT: 0, nvLock: 0, glitch: 0 }); FIG.g.visible = false;
     for (const c of casings) { c.m.visible = false; }
     hud.feed.innerHTML = ''; $('stats').hidden = true; showBrief(true);
-    $('mt').innerHTML = 'Last Light <span>Avenue</span>';
+    $('mt').innerHTML = MODE === 'hunt' ? 'Last Light <span>Hunted</span>' : 'Last Light <span>Avenue</span>';
+    huntReset();
     updateAmmo(); updateHealth();
   }
 
@@ -2611,16 +2644,18 @@ const SND = __SOUNDS__;
       const dir = fwd.clone().addScaledVector(right, Math.cos(a) * r).addScaledVector(upv, Math.sin(a) * r).normalize();
       if (i === 0) figureShotAt(dir);
       ray.set(cam.position, dir); ray.far = Wd.pellets ? 90 : 500;
-      const hits = ray.intersectObjects(shootables, false).filter(h => !(h.object.userData.bot && !h.object.userData.bot.alive) && !(h.object.userData.remote && !h.object.userData.remote.alive));
+      const hits = ray.intersectObjects(shootables, false).filter(h => !(h.object.userData.bot && !h.object.userData.bot.alive) && !(h.object.userData.remote && !h.object.userData.remote.alive) && !(h.object.userData.horror && !h.object.userData.horror.alive));
       if (!hits.length) continue;
       const h = hits[0];
       if (stats.shots % Wd.tracerEvery === 0 && (i === 0 || i % 3 === 0)) tracer(muzzleW, h.point);
-      const fall = Wd.pellets ? clamp(1 - (h.distance - 10) / 28, 0.2, 1) : 1;
+      const fall = Wd.pellets ? clamp(1 - (h.distance - 14) / 34, 0.2, 1) : 1;      // full damage out to 14 m
       if (h.object.userData.bot) { damageBot(h.object.userData.bot, h.object.userData.part, h.point, fall, !scored); scored = true; }
       else if (h.object.userData.remote) { hitRemote(h.object.userData.remote, h.object.userData.part, h.point, fall, !scored); scored = true; }
+      else if (h.object.userData.horror) { if (damageHorror(h.object.userData.horror, h.object.userData.part, h.point, fall, !scored)) scored = true; else impact(h, Wd.pellets && i > 2); }
       else impact(h, Wd.pellets && i > 2);
     }
     if (NET.on) netShot(fwd);
+    if (HUNT.on) huntNoise(P.pos, Wd.pellets ? 80 : 70);
     // gunfire is loud: everyone who isn't already fighting turns toward it
     for (const b of bots) if (b.alive && b.memory <= 0 && b.pos.distanceTo(P.pos) < 70) { b.lastSeen.copy(P.pos); b.memory = 2; b.aware = Math.max(b.aware, 0.6); }
     if (!Wd.bolt && !Wd.pump) ejectCasing();
@@ -2645,6 +2680,768 @@ const SND = __SOUNDS__;
     c.spin.set(rand(-25, 25), rand(-25, 25), rand(-25, 25));
   }
 
+  // ================================================================ Hunted: the open city and the things that hunt you in it
+  // A mode of its own. The avenue's barricades come down and its cross streets run on into a grid of city blocks, built the
+  // first time Hunted is picked. Night falls almost at once. Crawlers hunt by sound, the Still moves only while nobody is
+  // looking at it, wailers on the rooftops scream the crawlers onto you, and the figure is still out there behind the goggles.
+  // Find three radios and call for help, then hold out at the evac point until the helicopter comes.
+  const CITY = { X: 121, Z: 132, layer: null, perches: [], spots: [], evacs: [] };
+  // street grid, east side (the west side mirrors it): north-south avenues at x = 48 and 112, east-west streets at these z
+  const C_ROWS = [[-136, -100], [-80, -48], [-28, -10], [10, 28], [48, 80], [100, 136]];
+  const C_COLA = [59.5, 100.5], C_COLB = [123.5, 162];
+  function boxUV(w, h, d, tile = [6, 6.4]) {     // a box whose faces each repeat the texture at its own size (facades read right on every side)
+    const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * dims[f][0] / tile[0], uv.getY(i) * dims[f][1] / tile[1]); }
+    return g;
+  }
+  function cityBuilding(x0, x1, z0, z1, h, o = {}) {
+    const w = x1 - x0, d = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, f = o.f !== undefined ? o.f : randi(0, FACADE_MATS.length - 1);
+    vgeo(boxUV(w, h, d), FACADE_MATS[f], cx, h / 2, cz);
+    solid(x0, x1, 0, h, z0, z1); proxy(w, h, d, cx, 0, cz, 0, 'concrete');
+    if (!o.plain) {
+      vgeo(boxUV(w + 0.3, 4.2, d + 0.3, [6, 4.2]), STORE_MATS[randi(0, STORE_MATS.length - 1)], cx, 2.1, cz);     // shopfronts and shutters
+      vbox(w + 0.6, 0.35, d + 0.6, cx, 4.2, cz, M.cornice);                                                     // belt course
+      if (Math.random() < 0.6) {     // a shop sign on one street face
+        const sm = SIGN_MATS[randi(0, SIGN_MATS.length - 1)], side = randi(0, 3);
+        if (side < 2) vgeo(new THREE.BoxGeometry(Math.min(4.6, w - 1), 0.7, 0.12), sm, cx, 3.55, side ? z1 + 0.25 : z0 - 0.25, { ry: side ? 0 : Math.PI });
+        else vgeo(new THREE.BoxGeometry(0.12, 0.7, Math.min(4.6, d - 1)), sm, side === 2 ? x1 + 0.25 : x0 - 0.25, 3.55, cz, { ry: side === 2 ? Math.PI : 0 });
+      }
+    }
+    vbox(w + 0.9, 0.7, d + 0.9, cx, h - 0.7, cz, M.cornice);                                                     // cornice
+    vbox(w - 0.3, 0.9, d - 0.3, cx, h, cz, M.parapet);                                                           // parapet
+    vbox(w - 0.9, 0.06, d - 0.9, cx, h + 0.2, cz, ROOF_MAT, { cast: false });
+    const r = Math.random();
+    if (r < 0.3 && w > 7 && d > 7) {     // water tower
+      const tx = cx + rand(-w / 4, w / 4), tz = cz + rand(-d / 4, d / 4);
+      vgeo(new THREE.CylinderGeometry(1.6, 1.6, 3, 10), M.water, tx, h + 3, tz); vgeo(new THREE.ConeGeometry(1.8, 1.2, 10), M.water, tx, h + 5.1, tz);
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) vbox(0.12, 1.5, 0.12, tx + dx, h, tz + dz, M.iron, { cast: false });
+    } else if (r < 0.65) vbox(rand(1.8, 3), 1.3, rand(1.8, 3.5), cx + rand(-w / 4, w / 4), h, cz + rand(-d / 4, d / 4), M.ac);
+    // a perch for a wailer: out on the cornice in the middle of a street-facing wall (so it can be seen from below), on low and middling roofs
+    if (h < 30 && o.faces) for (const fc of o.faces) CITY.perches.push(fc === 'x0' ? { p: new V3(x0 - 0.3, h, cz), yaw: -Math.PI / 2 } : fc === 'x1' ? { p: new V3(x1 + 0.3, h, cz), yaw: Math.PI / 2 } : fc === 'z0' ? { p: new V3(cx, h, z0 - 0.3), yaw: Math.PI } : { p: new V3(cx, h, z1 + 0.3), yaw: 0 });
+  }
+  // a decorative fire escape on a facade: platforms every floor and a dangling ladder
+  function fireEscape(x, z, ry, floors) {
+    const P0 = xf(x, 0, z, 0, ry, 0), at = { parent: P0 };
+    for (let fl = 2; fl < floors; fl++) {
+      const y = fl * 3.2 + 0.1;
+      vbox(3.8, 0.08, 1.2, 0, y, 0.6, M.iron, at);
+      for (const ry2 of [0.5, 0.95]) vbox(3.8, 0.04, 0.04, 0, y + ry2, 1.18, M.iron, Object.assign({ cast: false }, at));
+      for (let k = 0; k <= 12; k++) vbox(0.025, 0.95, 0.025, -1.9 + k * 0.317, y, 1.18, M.iron, Object.assign({ cast: false }, at));
+      for (const sx of [-0.2, 0.2]) vbox(3.7, 0.14, 0.05, 0, y + 1.55, 0.6 + sx, M.iron, Object.assign({ rz: 0.75, cast: false }, at));
+    }
+    vbox(0.4, 2.6, 0.06, 1.4, 3.6, 1.0, M.iron, Object.assign({ cast: false }, at));
+  }
+  // one block of the city: shops below, apartments above, sometimes an alley down the middle
+  function cityBlock(x0, x1, z0, z1, sx) {
+    const alley = x1 - x0 > 30 && Math.random() < 0.55, mid = (x0 + x1) / 2, cols = alley ? [[x0, mid - 2], [mid + 2, x1]] : [[x0, mid], [mid, x1]];
+    cols.forEach(([a, b], ci) => {
+      let z = z0;
+      while (z < z1 - 0.1) {
+        let len = rand(9, 16); if (z1 - (z + len) < 8) len = z1 - z;
+        const tall = Math.random() < 0.1, h = tall ? rand(60, 95) : rand(13, 46);
+        const faces = [ci === 0 ? (sx > 0 ? 'x0' : 'x0') : 'x1']; if (z === z0) faces.push('z0'); if (z + len >= z1 - 0.1) faces.push('z1');
+        cityBuilding(a, b, z, z + len, h, { faces });
+        if (h > 18 && Math.random() < 0.35) { const onX0 = ci === 0; fireEscape(onX0 ? a - 0.05 : b + 0.05, z + len / 2, onX0 ? Math.PI / 2 : -Math.PI / 2, Math.floor((h - 5) / 3.2)); }
+        z += len;
+      }
+    });
+    if (alley) {     // the alley: dumpsters, bags, a fence part way down
+      for (let k = 0; k < 2; k++) { const z = rand(z0 + 3, z1 - 3); block(1.2, 1.3, 2.0, mid + rand(-0.8, 0.8), 0, z, M.dumpster, { surface: 'steel' }); for (let i = 0; i < 3; i++) vgeo(new THREE.DodecahedronGeometry(rand(0.25, 0.4), 0), M.trash, mid + rand(-1.4, 1.4), 0.3, z + rand(1.1, 2), { cast: false }); }
+      vbox(4, 0.06, z1 - z0, mid, 0.01, (z0 + z1) / 2, M.soot, { cast: false });
+    }
+  }
+  // the park: dead trees, a gazebo, benches and an iron fence with gaps
+  function cityPark(x0, x1, z0, z1) {
+    const g = mat(0x2b2a1e, 1), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    vbox(x1 - x0, 0.12, z1 - z0, cx, 0.03, cz, g, { cast: false });
+    for (let i = 0; i < 26; i++) {
+      const x = rand(x0 + 2, x1 - 2), z = rand(z0 + 2, z1 - 2); if (Math.hypot(x - cx, z - cz) < 6) continue;
+      const hgt = rand(4, 7); vgeo(new THREE.CylinderGeometry(0.12, 0.2, hgt, 6), M.trunk, x, hgt / 2, z);
+      for (let k = 0; k < 6; k++) { const a = rand(0, 6.3), l = rand(1.2, 2.6); vgeo(new THREE.CylinderGeometry(0.03, 0.07, l, 5), M.trunk, x + Math.cos(a) * l * 0.35, hgt * 0.65 + k * 0.4, z + Math.sin(a) * l * 0.35, { rz: Math.cos(a) * 0.9, rx: -Math.sin(a) * 0.9, cast: false }); }
+      solid(x - 0.2, x + 0.2, 0, hgt, z - 0.2, z + 0.2); proxy(0.35, hgt, 0.35, x, 0, z, 0, 'wood');
+    }
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; vbox(0.18, 2.8, 0.18, cx + Math.cos(a) * 3.2, 0.15, cz + Math.sin(a) * 3.2, M.white); }
+    vgeo(new THREE.ConeGeometry(4.2, 1.6, 8), M.cornice, cx, 3.75, cz);
+    vgeo(new THREE.CylinderGeometry(3.6, 3.6, 0.2, 8), M.white, cx, 0.15, cz, { cast: false });
+    for (const [a, b, c, d] of [[x0, x1, z0, z0], [x0, x1, z1, z1], [x0, x0, z0, z1], [x1, x1, z0, z1]]) {     // fence, with gates
+      const len = Math.hypot(b - a, d - c), n = Math.floor(len / 2.5);
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n; if (Math.abs(t - 0.5) < 0.08) continue;
+        const x = lerp(a, b, t), z = lerp(c, d, t), ax = a === b;      // railings: two rails and a row of pickets you can see through
+        for (const y of [0.25, 1.2]) vbox(ax ? 0.05 : 2.5, 0.05, ax ? 2.5 : 0.05, x, y, z, M.iron, { cast: false });
+        for (let q = 0; q < 8; q++) { const o = -1.1 + q * 0.314; vbox(0.03, 1.15, 0.03, ax ? x : x + o, 0.15, ax ? z + o : z, M.iron, { cast: false }); }
+        solid(x - (a === b ? 0.05 : 1.25), x + (a === b ? 0.05 : 1.25), 0, 1.3, z - (a === b ? 1.25 : 0.05), z + (a === b ? 1.25 : 0.05));
+      }
+    }
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2 + 0.3, x = cx + Math.cos(a) * 9, z = cz + Math.sin(a) * 7; vbox(1.8, 0.06, 0.45, x, 0.6, z, M.bench, { ry: -a + Math.PI / 2, cast: false }); }
+    CITY.spots.push({ p: new V3(cx + 1.2, 0, cz), name: 'the park gazebo' });
+  }
+  // the church: nave, a tall steeple, steps, and a yard of gravestones
+  function cityChurch(x0, x1, z0, z1, sx) {
+    const stone = FACADE_MATS[5], cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, nx0 = x0 + 6, nx1 = x1 - 8;
+    vgeo(boxUV(nx1 - nx0, 14, 12), stone, (nx0 + nx1) / 2, 7, cz); solid(nx0, nx1, 0, 14, cz - 6, cz + 6); proxy(nx1 - nx0, 14, 12, (nx0 + nx1) / 2, 0, cz, 0, 'concrete');
+    const roof = new THREE.CylinderGeometry(0.01, 8.5, 6, 4, 1); roof.rotateY(Math.PI / 4); roof.scale((nx1 - nx0) / 12, 1, 0.75);
+    vgeo(roof, M.cornice, (nx0 + nx1) / 2, 17, cz);
+    const tx = sx > 0 ? nx0 + 3 : nx1 - 3;
+    vgeo(boxUV(6, 34, 6), stone, tx, 17, cz); vgeo(new THREE.ConeGeometry(4.3, 16, 4), M.cornice, tx, 42, cz, { ry: Math.PI / 4 });
+    vbox(0.25, 3, 0.25, tx, 50, cz, M.iron); vbox(1.6, 0.25, 0.25, tx, 51.8, cz, M.iron);
+    solid(tx - 3, tx + 3, 0, 34, cz - 3, cz + 3);
+    for (let k = 0; k < 3; k++) vbox(5, 0.18, 1.2, sx > 0 ? nx0 - 0.6 - k * 1.2 : nx1 + 0.6 + k * 1.2, k * 0.18 + 0.12, cz, M.curb, { ry: Math.PI / 2, cast: false });
+    for (let i = 0; i < 22; i++) { const x = rand(x0 + 1, x1 - 1), z = Math.random() < 0.5 ? rand(z0 + 1, cz - 7.5) : rand(cz + 7.5, z1 - 1); vbox(0.6, rand(0.7, 1.1), 0.18, x, 0.12, z, M.jersey, { ry: rand(-0.2, 0.2) }); }
+    CITY.spots.push({ p: new V3(sx > 0 ? nx0 - 4.5 : nx1 + 4.5, 0, cz + 3), name: 'the church steps' });
+  }
+  // a parking lot: rows of dead cars and a booth
+  function cityLot(x0, x1, z0, z1) {
+    vbox(x1 - x0, 0.03, z1 - z0, (x0 + x1) / 2, 0, (z0 + z1) / 2, M.soot, { cast: false });
+    for (let x = x0 + 4; x < x1 - 3; x += 7) for (let z = z0 + 4; z < z1 - 3; z += 3) if (Math.random() < 0.45 && !(x < x0 + 9 && Math.abs(z - (z0 + z1) / 2) < 4)) car(x + rand(-0.3, 0.3), z, Math.PI / 2 + rand(-0.1, 0.1) + (Math.random() < 0.5 ? Math.PI : 0), pick(CAR_COLORS), pick(['sedan', 'sedan', 'suv', 'van']), { burnt: Math.random() < 0.2 });
+    const bx = x0 + 3, bz = (z0 + z1) / 2;
+    block(2.4, 2.6, 2.4, bx, 0, bz, mat(0xc9c2ae, 0.8), { surface: 'steel' }); vbox(2.6, 0.2, 2.6, bx, 2.6, bz, M.cornice);
+    CITY.spots.push({ p: new V3(bx + 2.2, 0, bz), name: 'the parking lot booth' });
+  }
+  // a construction site: a steel frame going nowhere, a site trailer, a crane
+  function citySite(x0, x1, z0, z1) {
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    vbox(x1 - x0, 0.05, z1 - z0, cx, 0, cz, mat(0x4a3f33, 1), { cast: false });
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) { const x = x0 + 8 + i * 7, z = z0 + 6 + j * 8; const hh = 24 - (i + j) * 2.5; vbox(0.35, hh, 0.35, x, 0, z, M.rust); solid(x - 0.2, x + 0.2, 0, hh, z - 0.2, z + 0.2); }
+    for (let lv = 1; lv < 6; lv++) for (let i = 0; i < 4; i++) vbox(0.3, 0.35, 16, x0 + 8 + i * 7, lv * 4, z0 + 14, M.rust, { cast: lv < 3 });
+    for (let lv = 1; lv < 6; lv++) for (let j = 0; j < 3; j++) vbox(21, 0.35, 0.3, x0 + 18.5, lv * 4, z0 + 6 + j * 8, M.rust, { cast: lv < 3 });
+    for (let i = 0; i < 8; i++) vgeo(new THREE.DodecahedronGeometry(rand(0.6, 1.4), 0), M.jersey, rand(x0 + 2, x1 - 2), 0.3, rand(z0 + 2, z1 - 2), { cast: false });
+    block(7, 2.8, 2.6, x1 - 6, 0, z1 - 4, mat(0xc5b38a, 0.8), { surface: 'steel' });
+    vbox(0.6, 46, 0.6, x1 - 10, 0, z0 + 4, M.cone); vbox(32, 0.8, 0.8, x1 - 18, 46, z0 + 4, M.cone); solid(x1 - 10.4, x1 - 9.6, 0, 46, z0 + 3.6, z0 + 4.4);
+    for (const [a, b, c, d] of [[x0, x1, z0, z0], [x0, x1, z1, z1]]) for (let x = a; x < b - 2; x += 3) if (Math.random() < 0.8) vbox(3, 2.2, 0.05, x + 1.5, 0, c, M.plywood, { cast: false });
+    CITY.spots.push({ p: new V3(x1 - 6, 0, z1 - 7), name: 'the site trailer' });
+  }
+  function buildCity() {
+    const L = CITY.layer = makeLayer('city');
+    layerBuild(L, () => {
+      // ground: asphalt either side of the avenue, the avenue's own road carried on past its old barricades, distant skyline
+      const asph = new THREE.MeshStandardMaterial({ map: ASPHALT.clone(), roughness: 0.95 }); asph.map.needsUpdate = true; asph.map.repeat.set(18, 54);
+      for (const sx of [-1, 1]) vgeo(new THREE.PlaneGeometry(126, 300), asph, sx * 103, 0, 0, { rx: -Math.PI / 2, cast: false });
+      for (const e of [-1, 1]) {
+        vgeo(new THREE.PlaneGeometry(80, 40), M.asphalt, 0, 0, e * 120, { rx: -Math.PI / 2, cast: false });
+        for (const sx of [-1, 1]) { vgeo(scaleUV(new THREE.BoxGeometry(4.5, 0.15, 46), 1, 46 / 6), M.side, sx * 11.25, 0.075, e * 113, { cast: false }); solid(sx > 0 ? 9 : -13.5, sx > 0 ? 13.5 : -9, 0, 0.15, e > 0 ? 90 : -136, e > 0 ? 136 : -90); }
+        decal(M.yellowLine, 0.12, 46, -0.12, e * 113); decal(M.yellowLine, 0.12, 46, 0.12, e * 113);
+      }
+      for (const b of AVE_BLD) solid(b.minX, b.maxX, 0, b.h, b.minZ, b.maxZ);       // the avenue's own buildings get walls
+      for (const sx of [-1, 1]) {
+        const X = (a, b) => sx > 0 ? [a, b] : [-b, -a];
+        // sidewalks: along the backs of the avenue's buildings, and a slab round every block
+        for (const [a, b] of [[-136, -44], [-32, -6], [6, 32], [44, 136]]) { const [p, q] = X(35.5, 41); vgeo(scaleUV(new THREE.BoxGeometry(5.5, 0.15, b - a), 1, (b - a) / 6), M.side, (p + q) / 2, 0.075, (a + b) / 2, { cast: false }); solid(p, q, 0, 0.15, a, b); }
+        const slab = (x0, x1, z0, z1) => { vgeo(scaleUV(new THREE.BoxGeometry(x1 - x0, 0.15, z1 - z0), (x1 - x0) / 6, (z1 - z0) / 6), M.side, (x0 + x1) / 2, 0.075, (z0 + z1) / 2, { cast: false }); solid(x0, x1, 0, 0.15, z0, z1); };
+        for (const [z0, z1] of C_ROWS) { const [p, q] = X(C_COLA[0] - 4.5, C_COLA[1] + 4.5); slab(p, q, z0 - 4, z1 + 4); }
+        { const [p, q] = X(C_COLB[0] - 4.5, C_COLB[1]); slab(p, q, -140, 140); }
+        // road markings: double yellow down 2nd and 3rd Avenues, dashed white down the cross streets
+        for (const c of [48, 112]) { decal(M.yellowLine, 0.12, 268, sx * c - 0.12, 0); decal(M.yellowLine, 0.12, 268, sx * c + 0.12, 0); }
+        for (const c of [-90, -38, 0, 38, 90]) for (let x = Math.abs(c) === 90 ? 42 : 15; x < 120; x += 6) if (Math.abs(x - 48) > 8 && Math.abs(x - 112) > 8) decal(M.whiteLine, 0.13, 3, sx * (x + 1.5), c, Math.PI / 2);
+        // blocks
+        C_ROWS.forEach(([z0, z1], ri) => {
+          const [a, b] = X(...C_COLA);
+          const special = sx > 0 ? (ri === 3 ? 'park' : ri === 1 ? 'lot' : null) : (ri === 2 ? 'church' : ri === 4 ? 'site' : null);
+          if (special === 'park') cityPark(a, b, z0, z1);
+          else if (special === 'church') cityChurch(a, b, z0, z1, sx);
+          else if (special === 'lot') { cityLot(sx > 0 ? a : (a + b) / 2, sx > 0 ? (a + b) / 2 : b, z0, z1); cityBlock(sx > 0 ? (a + b) / 2 + 1 : a, sx > 0 ? b : (a + b) / 2 - 1, z0, z1, sx); }
+          else if (special === 'site') citySite(a, b, z0, z1);
+          else cityBlock(a, b, z0, z1, sx);
+        });
+        // the outer edge: tall buildings all the way along 3rd Avenue
+        { let z = -140; while (z < 140) { const len = Math.min(140 - z, rand(10, 18)); const [a, b] = X(...C_COLB); cityBuilding(a, b, z, z + len, rand(25, 90), { faces: [sx > 0 ? 'x0' : 'x1'] }); z += len; } }
+        // street lights down both sides of 2nd and 3rd Avenues
+        for (const c of [48, 112]) for (const e of [-1, 1]) for (let z = -128; z < 130; z += 26) {
+          if ([-90, -38, 0, 38, 90].some(s => Math.abs(z - s) < 8)) continue;
+          const x = sx * (c + e * 7.6);
+          vgeo(new THREE.CylinderGeometry(0.09, 0.13, 7.5, 8), M.iron, x, 3.75, z);
+          vbox(1.8, 0.1, 0.12, x - e * sx * 0.9, 7.35, z, M.iron, { cast: false });
+          vbox(0.5, 0.18, 0.3, x - e * sx * 1.8, 7.22, z, M.lampOff, { cast: false }); LAMPS.push({ pos: new V3(x - e * sx * 1.8, 7.2, z) });
+          solid(x - 0.15, x + 0.15, 0, 7, z - 0.15, z + 0.15);
+        }
+        // abandoned cars, some burnt out, some slewed across the lanes
+        for (const c of [48, 112]) for (let i = 0; i < 9; i++) {
+          const z = rand(-128, 128); if ([-90, -38, 0, 38, 90].some(s => Math.abs(z - s) < 9)) continue;
+          const slew = Math.random() < 0.25, lane = pick([-4.6, -1.8, 1.8, 4.6]);
+          car(sx * (c + lane), z, (lane > 0 ? 0 : Math.PI) + (slew ? rand(-0.9, 0.9) : rand(-0.06, 0.06)), pick(CAR_COLORS), pick(['sedan', 'sedan', 'taxi', 'suv', 'van']), { burnt: Math.random() < 0.25, brokenGlass: Math.random() < 0.3 });
+        }
+        for (const c of [-90, -38, 0, 38, 90]) for (let i = 0; i < 3; i++) {
+          const x = rand(Math.abs(c) === 90 ? 44 : 20, 116); if (Math.abs(x - 48) < 9 || Math.abs(x - 112) < 9) continue;
+          car(sx * x, c + pick([-3.2, 3.2]) + rand(-0.4, 0.4), Math.PI / 2 * pick([1, -1]) + rand(-0.15, 0.15), pick(CAR_COLORS), pick(['sedan', 'suv', 'taxi']), { burnt: Math.random() < 0.3 });
+        }
+        // the ends of the streets: barricades and a wall of wrecks where the city goes on without you
+        for (const e of [-1, 1]) for (const c of [48, 112]) { block(14, 2.4, 2.4, sx * c, 0, e * 134.5, M.jersey, { surface: 'concrete' }); for (let k = -2; k <= 2; k++) vbox(1.2, 0.85, 3.2, sx * (c + k * 2.8), 2.4, e * 134.5, M.jersey, { ry: Math.PI / 2 + rand(-0.2, 0.2), cast: false }); }
+        for (const c of [-90, -38, 0, 38, 90]) block(2.4, 2.4, 12, sx * 121.8, 0, c, M.jersey, { surface: 'concrete' });
+        CITY.spots.push({ p: new V3(sx * 112, 0, sx * 64), name: sx > 0 ? 'the corner of 3rd Avenue' : 'the 3rd Avenue overpass' });
+      }
+      // the avenue runs on to the north and south ends too
+      for (const e of [-1, 1]) { block(18, 2.4, 2.4, 0, 0, e * 134.5, M.jersey, { surface: 'concrete' }); }
+      // the edge of the city to the north and south: a long wall of tall buildings
+      for (const e of [-1, 1]) { let x = -162; while (x < 162) { const w = Math.min(162 - x, rand(12, 22)); cityBuilding(x, x + w, e > 0 ? 140 : -176, e > 0 ? 176 : -140, rand(30, 110), { plain: Math.abs(x) < 40 ? false : Math.random() < 0.5 }); x += w; } }
+      // far skyline: towers out past the edge that only ever show as silhouettes
+      const sk = mat(0x23232a, 1);
+      for (let i = 0; i < 70; i++) { const a = rand(0, Math.PI * 2), r = rand(230, 520), w = rand(14, 40), h = rand(40, 150); vbox(w, h, rand(14, 40), Math.sin(a) * r, 0, Math.cos(a) * r, sk, { cast: false }); }
+      // ammo crates round the city
+      for (const [x, z] of [[-52, -60], [54, 20], [108, -40], [-108, 30], [-44, 96], [60, -95], [-116, -100], [115, 110], [24, -110], [-20, 116]]) {
+        AMMO.push(new V3(x, 0.15, z)); block(1.0, 0.5, 0.6, x, 0.15, z, M.ammo, { surface: 'wood' }); vbox(1.02, 0.06, 0.62, x, 0.59, z, M.sign, { cast: false });
+      }
+      CITY.evacs = [{ p: new V3(80, 0.15, 38), name: 'the 2nd Avenue intersection' }, { p: new V3(-80, 0.15, -38), name: 'the West 34th Street crossing' }, { p: new V3(0, 0, 112), name: 'the north end of the avenue' }];
+    });
+    flushBatches();
+    for (const Lp of L.lamps) setupLamp(Lp, L.g);
+    CITY.spots = CITY.spots.filter(s => navFreeAt(s.p.x, s.p.z, true));
+    CITY.perches = CITY.perches.filter(p => Math.abs(p.p.z) < 135);      // the blocks' far ends only look at the city wall
+  }
+
+  // ---------------------------------------------------------------- navigation: a 2 m grid over the city, and a flow field to the player
+  const NAV = { cell: 2, x0: -126, z0: -138, nx: 126, nz: 138, blocked: null, dist: null, q: null, t: 0, tx: -1 };
+  function navBuild() {
+    const { nx, nz, cell, x0, z0 } = NAV; NAV.blocked = new Uint8Array(nx * nz); NAV.dist = new Int16Array(nx * nz); NAV.q = new Int32Array(nx * nz);
+    for (const b of colliders) {
+      if (b.minY > 1.4 || b.maxY < 0.5) continue;
+      const i0 = Math.max(0, Math.floor((b.minX - 0.35 - x0) / cell)), i1 = Math.min(nx - 1, Math.floor((b.maxX + 0.35 - x0) / cell));
+      const j0 = Math.max(0, Math.floor((b.minZ - 0.35 - z0) / cell)), j1 = Math.min(nz - 1, Math.floor((b.maxZ + 0.35 - z0) / cell));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const cx = x0 + (i + 0.5) * cell, cz = z0 + (j + 0.5) * cell;     // blocked if the box covers most of the cell's middle
+        if (cx > b.minX - 0.6 && cx < b.maxX + 0.6 && cz > b.minZ - 0.6 && cz < b.maxZ + 0.6) NAV.blocked[j * nx + i] = 1;
+      }
+    }
+    for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) { const x = x0 + (i + 0.5) * cell, z = z0 + (j + 0.5) * cell; if (Math.abs(x) > CITY.X || Math.abs(z) > CITY.Z) NAV.blocked[j * nx + i] = 1; }
+    NAV.tx = -1;
+  }
+  const navIdx = (x, z) => { const i = Math.floor((x - NAV.x0) / NAV.cell), j = Math.floor((z - NAV.z0) / NAV.cell); return i < 0 || j < 0 || i >= NAV.nx || j >= NAV.nz ? -1 : j * NAV.nx + i; };
+  function navFreeAt(x, z, strict) { if (!NAV.blocked) return true; const k = navIdx(x, z); return k >= 0 && !NAV.blocked[k] && (!strict || NAV.blocked[k] === 0); }
+  function navFlow() {        // breadth-first out from the player's cell (or the street below them when they're up on a roof)
+    const k0 = navIdx(P.pos.x, P.pos.z); if (k0 < 0) return;
+    const { nx, nz, dist, q, blocked } = NAV; dist.fill(-1);
+    let h = 0, t = 0; dist[k0] = 0; q[t++] = k0;
+    while (h < t) {
+      const k = q[h++], i = k % nx, j = (k / nx) | 0, d = dist[k] + 1;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue; const a = i + di, b = j + dj; if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
+        const kk = b * nx + a; if (blocked[kk] || dist[kk] >= 0) continue;
+        if (di && dj && (blocked[j * nx + a] || blocked[b * nx + i])) continue;       // no cutting corners
+        dist[kk] = d; q[t++] = kk;
+      }
+    }
+    NAV.tx = k0;
+  }
+  function navDir(pos, out) {        // which way to go from here to reach the player through the streets
+    const k = navIdx(pos.x, pos.z); if (k < 0 || !NAV.dist) return false;
+    const { nx, dist, blocked } = NAV, i = k % nx, j = (k / nx) | 0;
+    let best = -1, bd = dist[k] >= 0 && !blocked[k] ? dist[k] : 1e9;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue; const a = i + di, b = j + dj; if (a < 0 || b < 0 || a >= nx || b >= NAV.nz) continue;
+      const kk = b * nx + a; if (blocked[kk] || dist[kk] < 0) continue;
+      if (di && dj && (blocked[j * nx + a] || blocked[b * nx + i])) continue;
+      if (dist[kk] < bd) { bd = dist[kk]; best = kk; }
+    }
+    if (best < 0) return false;
+    out.set(NAV.x0 + ((best % nx) + 0.5) * NAV.cell - pos.x, 0, NAV.z0 + (((best / nx) | 0) + 0.5) * NAV.cell - pos.z);
+    const l = out.length(); if (l < 1e-4) return false; out.divideScalar(l); return true;
+  }
+  function navRandomNear(c, r0, r1) {     // a free street cell somewhere in a ring round a point
+    for (let k = 0; k < 40; k++) { const a = rand(0, Math.PI * 2), r = rand(r0, r1), x = c.x + Math.sin(a) * r, z = c.z + Math.cos(a) * r; if (Math.abs(x) < CITY.X - 2 && Math.abs(z) < CITY.Z - 2 && navFreeAt(x, z)) return new V3(x, 0, z); }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- the horrors' bodies
+  const HM = {
+    flesh: mat(0xb9a49c, 0.42, 0.05, { flatShading: false }), fleshDk: mat(0x6e5550, 0.55), teeth: mat(0xd9d2b8, 0.4), gum: mat(0x4a1418, 0.5),
+    still: mat(0xd0cbc2, 0.32, 0.0, { flatShading: false, emissive: new THREE.Color(0x1d1c1a) }), stillJ: mat(0xa9a49c, 0.3, 0.0, { flatShading: false, emissive: new THREE.Color(0x121110) }),
+    wail: mat(0x8a7b6e, 0.55, 0.0, { flatShading: false, emissive: new THREE.Color(0x140f0c) }), wailDk: mat(0x2f2622, 0.7), throat: new THREE.MeshBasicMaterial({ color: 0x400806, toneMapped: false })
+  };
+  const hmesh = (geo, m, parent, p, r, s) => { const me = new THREE.Mesh(geo, m); me.castShadow = true; if (p) me.position.set(...p); if (r) me.rotation.set(...r); if (s) me.scale.set(...s); parent.add(me); return me; };
+  const hgrp = (parent, p, r) => { const g = new THREE.Group(); if (p) g.position.set(...p); if (r) g.rotation.set(...r); parent.add(g); return g; };
+  function hitBox(g, h, part, w, ht, d, p) {      // invisible box bullets can hit
+    const m = new THREE.Mesh(proxyGeo, M.steel); m.visible = false; m.scale.set(w, ht, d); m.position.set(...p); m.userData.horror = h; m.userData.part = part; m.userData.surface = h.kind === 'still' ? 'concrete' : 'flesh'; g.add(m); h.boxes.push(m); return m;
+  }
+  // crawler: a person stretched thin and walking on all fours, elbows and knees jutting up higher than its back, no eyes, a jaw that hangs open
+  function buildCrawler(h) {
+    const g = new THREE.Group(), body = hgrp(g, [0, 0.62, 0]);
+    hmesh(new THREE.CylinderGeometry(0.15, 0.2, 0.9, 8).rotateX(Math.PI / 2), HM.flesh, body, [0, 0, 0]);                  // ribcage, stretched
+    for (let k = 0; k < 7; k++) hmesh(new THREE.ConeGeometry(0.035, 0.09, 4), HM.fleshDk, body, [0, 0.17 - k * 0.004, 0.36 - k * 0.12]);   // spine
+    for (let k = 0; k < 4; k++) for (const s of [-1, 1]) hmesh(new THREE.TorusGeometry(0.15, 0.012, 3, 8, Math.PI * 0.7), HM.fleshDk, body, [s * 0.01, 0, 0.25 - k * 0.11], [0, Math.PI / 2, s > 0 ? -0.3 : Math.PI + 0.3]);  // ribs
+    hmesh(new THREE.SphereGeometry(0.17, 8, 6), HM.flesh, body, [0, 0.02, -0.45], null, [1, 0.8, 1.1]);                    // hips
+    const neck = hgrp(body, [0, 0.05, 0.45], [0.5, 0, 0]);
+    hmesh(new THREE.CylinderGeometry(0.05, 0.07, 0.3, 6).rotateX(Math.PI / 2), HM.flesh, neck, [0, 0, 0.12]);
+    const head = hgrp(neck, [0, 0, 0.3], [-0.7, 0, 0]);
+    hmesh(new THREE.SphereGeometry(0.13, 10, 8), HM.flesh, head, [0, 0.03, 0.04], null, [0.9, 0.85, 1.35]);               // smooth, eyeless skull
+    const jaw = hgrp(head, [0, -0.04, -0.02]);
+    hmesh(new THREE.BoxGeometry(0.15, 0.04, 0.24), HM.flesh, jaw, [0, -0.02, 0.12]);
+    hmesh(new THREE.BoxGeometry(0.13, 0.02, 0.2), HM.gum, jaw, [0, 0.005, 0.12]);
+    for (let k = 0; k < 6; k++) for (const s of [-1, 1]) { hmesh(new THREE.ConeGeometry(0.008, 0.04, 3), HM.teeth, jaw, [s * 0.055, 0.025, 0.04 + k * 0.035]); hmesh(new THREE.ConeGeometry(0.008, 0.04, 3), HM.teeth, head, [s * 0.055, -0.065, 0.06 + k * 0.035], [Math.PI, 0, 0]); }
+    const legs = [];
+    for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {        // shoulder or hip -> elbow up high -> hand far out on the ground
+      const hip = hgrp(body, [sx * 0.16, 0.02, sz * 0.38]);
+      const up = hgrp(hip, [0, 0, 0]);
+      hmesh(new THREE.CylinderGeometry(0.035, 0.05, 0.5, 6).translate(0, 0.25, 0), HM.flesh, up);
+      const knee = hgrp(up, [0, 0.5, 0]);
+      hmesh(new THREE.SphereGeometry(0.05, 6, 4), HM.fleshDk, knee);
+      hmesh(new THREE.CylinderGeometry(0.025, 0.04, 0.62, 6).translate(0, -0.31, 0), HM.flesh, knee);
+      const hand = hgrp(knee, [0, -0.62, 0]);
+      for (let f = 0; f < 3; f++) hmesh(new THREE.ConeGeometry(0.014, 0.16, 4).translate(0, -0.08, 0), HM.fleshDk, hand, [(f - 1) * 0.03, 0, 0], [0.25, 0, (f - 1) * 0.35]);
+      legs.push({ up, knee, sx, sz, ph: (sx * sz > 0 ? 0 : Math.PI) });
+    }
+    hitBox(g, h, 'body', 0.5, 0.5, 1.15, [0, 0.62, 0]); hitBox(g, h, 'head', 0.26, 0.24, 0.34, [0, 0.62, 0.78]);
+    h.parts = { body, neck, head, jaw, legs };
+    return g;
+  }
+  function poseCrawler(h, dt) {
+    const { body, neck, head, jaw, legs } = h.parts, sp = Math.hypot(h.vel.x, h.vel.z);
+    h.gait += dt * (2 + sp * 2.4);
+    const lunge = h.state === 'lunge' ? 1 : 0, wind = h.state === 'wind' ? 1 : 0;
+    body.position.y = 0.62 - wind * 0.18 + Math.abs(Math.sin(h.gait)) * 0.04 * Math.min(1, sp / 3);
+    body.rotation.x = lerp(body.rotation.x, wind * 0.25 - lunge * 0.3, damp(10, dt));
+    body.rotation.z = Math.sin(h.gait) * 0.06 * Math.min(1, sp / 3);
+    neck.rotation.x = 0.5 + Math.sin(h.t * 7.3) * 0.05 + h.twitch * 0.6;
+    head.rotation.y = Math.sin(h.t * 1.3) * 0.3 * (h.state === 'roam' ? 1 : 0.2) + h.twitch * 0.8;
+    head.rotation.z = h.twitch * 0.9;
+    jaw.rotation.x = lerp(jaw.rotation.x, h.state === 'roam' ? 0.25 + Math.sin(h.t * 2) * 0.1 : 0.9, damp(8, dt));
+    h.twitch *= Math.exp(-dt * 6); if (Math.random() < dt * 0.6) h.twitch = rand(-0.4, 0.4);
+    for (const L of legs) {
+      const s = Math.sin(h.gait + L.ph), lift = Math.max(0, s) * Math.min(1, sp / 2);
+      L.up.rotation.set(L.sz * (0.55 + s * 0.35 * Math.min(1, sp / 2)) - lunge * L.sz * 0.6, 0, -L.sx * (0.95 + lift * 0.15));
+      L.knee.rotation.set(0, 0, L.sx * (2.2 - lift * 0.4) + wind * L.sx * 0.3);
+    }
+  }
+  // the Still: a mannequin two and a half metres tall, ball-jointed, faceless. It changes pose every time you look away.
+  const STILL_POSES = [
+    { head: [0.1, 0, 0.3], arms: [[0.1, 0, 0.12], [0.1, 0, -0.12]], el: [0.1, 0.1], lean: 0 },
+    { head: [-0.25, 0, -0.5], arms: [[-1.4, 0, 0.1], [0.2, 0, -0.1]], el: [0.2, 0.1], lean: 0.08 },
+    { head: [0.3, 0.6, 0.2], arms: [[-0.6, 0, 0.6], [-0.6, 0, -0.6]], el: [1.2, 1.2], lean: 0.15 },
+    { head: [0, 0, 1.1], arms: [[0.05, 0, 0.05], [-2.6, 0, -0.2]], el: [0, 0.4], lean: -0.05 },
+    { head: [0.6, 0, 0], arms: [[-1.5, 0.3, 0], [-1.5, -0.3, 0]], el: [0.05, 0.05], lean: 0.2 }
+  ];
+  function buildStill(h) {
+    const g = new THREE.Group(), m = HM.still, j = HM.stillJ;
+    const hips = hgrp(g, [0, 1.3, 0]);
+    hmesh(new THREE.SphereGeometry(0.17, 12, 8), m, hips, null, null, [1.1, 0.7, 0.75]);
+    for (const s of [-1, 1]) {
+      const leg = hgrp(hips, [s * 0.11, -0.05, 0]);
+      hmesh(new THREE.CylinderGeometry(0.065, 0.05, 0.62, 10).translate(0, -0.31, 0), m, leg);
+      hmesh(new THREE.SphereGeometry(0.055, 10, 8), j, leg, [0, -0.64, 0]);
+      hmesh(new THREE.CylinderGeometry(0.05, 0.035, 0.6, 10).translate(0, -0.95, 0), m, leg);
+      hmesh(new THREE.BoxGeometry(0.08, 0.05, 0.22), m, leg, [0, -1.25, 0.06]);
+    }
+    const torso = hgrp(hips, [0, 0.08, 0]);
+    hmesh(new THREE.CylinderGeometry(0.16, 0.11, 0.62, 12).translate(0, 0.31, 0), m, torso, null, null, [1, 1, 0.65]);
+    hmesh(new THREE.SphereGeometry(0.06, 10, 8), j, torso, [0, 0.66, 0]);
+    const head = hgrp(torso, [0, 0.72, 0]);
+    hmesh(new THREE.CylinderGeometry(0.035, 0.04, 0.16, 8).translate(0, 0.05, 0), m, head);
+    hmesh(new THREE.SphereGeometry(0.1, 14, 10), m, head, [0, 0.24, 0.01], null, [0.95, 1.55, 1.05]);       // a smooth egg where a face should be
+    const arms = [], els = [];
+    for (const s of [-1, 1]) {
+      hmesh(new THREE.SphereGeometry(0.06, 10, 8), j, torso, [s * 0.19, 0.6, 0]);
+      const sh = hgrp(torso, [s * 0.19, 0.6, 0]); sh.rotation.order = 'YXZ';
+      hmesh(new THREE.CylinderGeometry(0.045, 0.04, 0.5, 10).translate(0, -0.25, 0), m, sh);
+      const el = hgrp(sh, [0, -0.52, 0]);
+      hmesh(new THREE.SphereGeometry(0.045, 10, 8), j, el);
+      hmesh(new THREE.CylinderGeometry(0.038, 0.03, 0.55, 10).translate(0, -0.28, 0), m, el);
+      const hand = hgrp(el, [0, -0.6, 0]);
+      hmesh(new THREE.BoxGeometry(0.04, 0.13, 0.08), m, hand, [0, -0.04, 0]);
+      for (let f = 0; f < 4; f++) hmesh(new THREE.CylinderGeometry(0.008, 0.006, 0.13, 5).translate(0, -0.065, 0), m, hand, [0, -0.1, -0.03 + f * 0.02]);
+      arms.push(sh); els.push(el);
+    }
+    hitBox(g, h, 'body', 0.45, 1.6, 0.35, [0, 1.05, 0]); hitBox(g, h, 'head', 0.25, 0.4, 0.25, [0, 2.2, 0]);
+    h.parts = { torso, head, arms, els };
+    return g;
+  }
+  function poseStill(h, k) {
+    const P_ = STILL_POSES[k], { torso, head, arms, els } = h.parts;
+    head.rotation.set(...P_.head); torso.rotation.x = P_.lean;
+    arms.forEach((a, i) => { const r = P_.arms[i]; a.rotation.set(r[0], r[1], r[2] + (i ? -0.08 : 0.08)); els[i].rotation.x = -P_.el[i]; });
+  }
+  // wailer: a gaunt thing crouched on a parapet, all neck and jaw, its throat glowing when it screams
+  function buildWailer(h) {      // crouched out on the cornice like a gargoyle, leaning over the street, arms hanging down the wall
+    const g = new THREE.Group(), m = HM.wail, d = HM.wailDk;
+    const body = hgrp(g, [0, 0.45, 0], [0.35, 0, 0]);
+    hmesh(new THREE.CylinderGeometry(0.26, 0.16, 0.8, 9).translate(0, 0.4, 0), m, body, null, null, [1, 1, 0.8]);          // a long hunched back
+    hmesh(new THREE.SphereGeometry(0.2, 9, 7), m, body, [0, 0.72, -0.04], null, [1.7, 0.8, 1]);                              // shoulders
+    for (let k = 0; k < 7; k++) hmesh(new THREE.ConeGeometry(0.035, 0.1, 4), d, body, [0, 0.1 + k * 0.11, -0.2], [-0.5, 0, 0]);   // spine
+    const neck = hgrp(body, [0, 0.8, 0.06], [0.55, 0, 0]);
+    for (let k = 0; k < 4; k++) hmesh(new THREE.CylinderGeometry(0.06, 0.075, 0.16, 7).translate(0, 0.08, 0), m, neck, [0, k * 0.14, 0], [0.06 * k, 0, 0]);
+    const head = hgrp(neck, [0, 0.58, 0.04], [0.45, 0, 0]);       // looking down into the street
+    hmesh(new THREE.SphereGeometry(0.16, 12, 9), m, head, [0, 0.04, 0.06], null, [0.85, 0.75, 1.35]);
+    const jaw = hgrp(head, [0, -0.04, -0.04]);
+    hmesh(new THREE.BoxGeometry(0.18, 0.06, 0.36), m, jaw, [0, -0.04, 0.16]);
+    const throat = hmesh(new THREE.SphereGeometry(0.08, 8, 6), HM.throat, head, [0, -0.03, 0.08]);
+    for (let k = 0; k < 8; k++) for (const s of [-1, 1]) hmesh(new THREE.ConeGeometry(0.011, 0.06, 3), HM.teeth, jaw, [s * 0.065, 0.02, 0.02 + k * 0.04]);
+    const arms = [];
+    for (const s of [-1, 1]) {      // long arms hanging down over the edge, the hands spread flat on the wall below
+      const sh = hgrp(body, [s * 0.3, 0.7, 0.02], [-0.6, 0, s * 0.12]);
+      hmesh(new THREE.CylinderGeometry(0.06, 0.045, 0.85, 7).translate(0, -0.42, 0), m, sh);
+      const el = hgrp(sh, [0, -0.85, 0], [0.45, 0, 0]);
+      hmesh(new THREE.SphereGeometry(0.055, 7, 5), d, el);
+      hmesh(new THREE.CylinderGeometry(0.045, 0.035, 0.9, 7).translate(0, -0.45, 0), m, el);
+      for (let f = 0; f < 4; f++) hmesh(new THREE.ConeGeometry(0.016, 0.28, 4).translate(0, -0.14, 0), d, el, [(f - 1.5) * 0.04, -0.9, 0], [0.15, 0, (f - 1.5) * 0.25]);
+      arms.push(sh);
+    }
+    for (const s of [-1, 1]) {      // legs folded up under it, knees higher than its back
+      const th = hgrp(g, [s * 0.2, 0.45, -0.1], [-2.3, 0, s * 0.25]); hmesh(new THREE.CylinderGeometry(0.075, 0.055, 0.6, 7).translate(0, -0.3, 0), m, th);
+      const sn = hgrp(th, [0, -0.6, 0], [2.6, 0, 0]); hmesh(new THREE.CylinderGeometry(0.05, 0.04, 0.6, 7).translate(0, -0.3, 0), m, sn);
+    }
+    hitBox(g, h, 'body', 0.6, 0.9, 0.6, [0, 0.85, 0.15]); hitBox(g, h, 'head', 0.32, 0.3, 0.42, [0, 1.35, 0.75]);
+    g.scale.setScalar(1.6);      // bigger than a person, so it reads against the sky from the street below
+    h.parts = { body, neck, head, jaw, throat, arms };
+    return g;
+  }
+
+  // ---------------------------------------------------------------- the horrors' minds
+  const HZ = [];       // every horror in the city, pooled
+  const wailLight = new THREE.PointLight(0xff2a14, 0, 14, 2); scene.add(wailLight);
+  function mergeParts(root, keep) {      // fewer draw calls: fold each joint's little meshes into one mesh per material
+    const groups = []; root.traverse(o => { if (o.isGroup) groups.push(o); });
+    const cat = arrs => { const out = new Float32Array(arrs.reduce((a, b) => a + b.length, 0)); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; };
+    for (const g of groups) {
+      const by = new Map();
+      for (const c of g.children) if (c.isMesh && c.visible && !keep.includes(c)) { if (!by.has(c.material)) by.set(c.material, []); by.get(c.material).push(c); }
+      for (const [m, list] of by) {
+        if (list.length < 2) continue;
+        const pos = [], nor = [];
+        for (const c of list) { c.updateMatrix(); const ge = c.geometry.index ? c.geometry.toNonIndexed() : c.geometry.clone(); ge.applyMatrix4(c.matrix); pos.push(ge.attributes.position.array); nor.push(ge.attributes.normal.array); g.remove(c); }
+        const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(cat(pos), 3)); geo.setAttribute('normal', new THREE.BufferAttribute(cat(nor), 3));
+        const me = new THREE.Mesh(geo, m); me.castShadow = true; g.add(me);
+      }
+    }
+  }
+  function makeHorror(kind) {
+    const h = { kind, pos: new V3(0, -50, 0), vel: new V3(), yaw: 0, alive: false, active: false, hp: 0, r: kind === 'still' ? 0.3 : 0.45, boxes: [], t: rand(0, 9), gait: 0, twitch: 0, state: 'idle', st: 0, mem: 0, last: new V3(), cd: 0, sense: 0, deadT: 0 };
+    h.g = kind === 'crawler' ? buildCrawler(h) : kind === 'still' ? buildStill(h) : buildWailer(h);
+    mergeParts(h.g, [h.parts.throat].filter(Boolean));
+    h.g.visible = false; scene.add(h.g); HZ.push(h);
+    return h;
+  }
+  for (let i = 0; i < 12; i++) makeHorror('crawler');
+  for (let i = 0; i < 3; i++) makeHorror('wailer');
+  makeHorror('still');
+  function horrorOn(h, at, o = {}) {
+    h.active = h.alive = true; h.pos.copy(at); h.vel.set(0, 0, 0); h.g.visible = true; h.g.position.copy(at);
+    h.hp = h.kind === 'crawler' ? 70 : h.kind === 'wailer' ? 90 : 1e9; h.state = o.state || 'roam'; h.st = 0; h.mem = 0; h.cd = 0; h.deadT = 0; h.g.rotation.set(0, o.yaw !== undefined ? o.yaw : rand(0, 6.3), 0); h.yaw = h.g.rotation.y;
+    for (const b of h.boxes) if (!shootables.includes(b)) shootables.push(b);
+  }
+  function horrorOff(h) {
+    h.active = h.alive = false; h.g.visible = false; h.pos.set(0, -50, 0); h.g.position.copy(h.pos);
+    for (const b of h.boxes) { const i = shootables.indexOf(b); if (i >= 0) shootables.splice(i, 1); }
+  }
+  const unseenSpot = (r0, r1) => {      // somewhere out of sight to bring something in
+    for (let k = 0; k < 24; k++) {
+      const p = navRandomNear(P.pos, r0, r1); if (!p) continue;
+      const head = tmp2.set(p.x, 1.2, p.z); cam.getWorldDirection(fwd); const to = head.clone().sub(cam.position);
+      if (to.normalize().dot(fwd) < 0.3 || !clearLine(cam.position, head)) return p;
+    }
+    return navRandomNear(P.pos, r0, r1);
+  };
+  // noise: gunshots, sprinting, radios. Crawlers in earshot come to look.
+  function huntNoise(at, radius) {
+    for (const h of HZ) if (h.alive && h.kind === 'crawler' && h.pos.distanceTo(at) < radius) { h.last.copy(at); h.mem = Math.max(h.mem, 5); if (h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.5) sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.4, rand(0.92, 1.08)); } }
+  }
+  const _hh = new V3();
+  function headOf(h) { return _hh.set(h.pos.x, h.pos.y + (h.kind === 'still' ? 2.2 : h.kind === 'wailer' ? 2.2 : 0.7), h.pos.z); }
+  function damageHorror(h, part, point, mult, countHit = true) {
+    if (!h.alive) return false;
+    if (h.kind === 'still') return false;          // bullets just chip it
+    const dmg = W().dmg[part === 'head' ? 'head' : 'body'] * mult;
+    h.hp -= dmg; h.twitch = rand(-1, 1); if (countHit) stats.hits++;
+    sfxAt('flesh' + randi(0, 3), point, 1.3, rand(0.85, 1.0)); puff(point, 0x3a1a18, 5, 0.06, 0.6, 0.4);
+    if (h.kind === 'crawler') { h.mem = Math.max(h.mem, 6); h.last.copy(P.pos); if (h.state === 'roam') h.state = 'hunt'; h.st = Math.min(h.st, 0); h.vel.multiplyScalar(0.3); }
+    if (h.kind === 'wailer' && h.state === 'inhale') { h.state = 'idle'; h.cd = 6; sfxAt('crawl_lunge', headOf(h), 1.2, 0.6); }
+    if (h.hp <= 0) {
+      h.alive = false; h.state = 'dead'; h.deadT = 0; stats.kills++; HUNT.kills++; if (part === 'head') stats.heads++;
+      for (const b of h.boxes) { const i = shootables.indexOf(b); if (i >= 0) shootables.splice(i, 1); }
+      sfxAt(h.kind === 'wailer' ? 'crawl_screech1' : 'crawl_die', headOf(h), 1.6, h.kind === 'wailer' ? 0.6 : rand(0.9, 1.05));
+      feed(h.kind === 'wailer' ? '<b style="color:#d96a4a">Wailer</b> down' : `<b style="color:#c9b3a8">Crawler</b> down${part === 'head' ? ' · headshot' : ''}`);
+      hitMarker(true);
+      if (h.kind === 'wailer') { h.respawn = 70; wailLight.intensity = 0; }
+    } else hitMarker(false);
+    return true;
+  }
+  function seenByPlayer(pt, margin = 0.55) {      // is this point on screen and not behind anything?
+    cam.getWorldDirection(fwd); const to = tmp2.copy(pt).sub(cam.position), d = to.length(); if (d > 140) return false;
+    to.divideScalar(d); const vf = THREE.MathUtils.degToRad(cam.fov) * margin, hf = Math.atan(Math.tan(vf) * cam.aspect);
+    const right_ = tmp.set(-fwd.z, 0, fwd.x).normalize(), up_ = new V3().crossVectors(right_, fwd);
+    const x = Math.atan2(to.dot(right_), to.dot(fwd)), y = Math.atan2(to.dot(up_), to.dot(fwd));
+    if (to.dot(fwd) <= 0 || Math.abs(x) > hf || Math.abs(y) > vf) return false;
+    return d < 3 || clearLine(cam.position, pt);
+  }
+  const _hd = new V3(), _hv = new V3();
+  function moveHorror(h, dir, speed, dt, acc = 8) {
+    h.vel.x += (dir.x * speed - h.vel.x) * damp(acc, dt); h.vel.z += (dir.z * speed - h.vel.z) * damp(acc, dt);
+    h.pos.x += h.vel.x * dt; h.pos.z += h.vel.z * dt;
+    collide(h.pos, h.vel, h.r, h.pos.y, 1.2);
+    for (const o of HZ) if (o !== h && o.alive && o.kind === h.kind && Math.abs(o.pos.y - h.pos.y) < 1) {     // don't stack up
+      const dx = h.pos.x - o.pos.x, dz = h.pos.z - o.pos.z, d2 = dx * dx + dz * dz, rr = h.r + o.r;
+      if (d2 < rr * rr && d2 > 1e-6) { const d = Math.sqrt(d2), k = (rr - d) * 0.5 / d; h.pos.x += dx * k; h.pos.z += dz * k; }
+    }
+    if (Math.hypot(h.vel.x, h.vel.z) > 0.3) h.yaw = lerpAngle(h.yaw, Math.atan2(h.vel.x, h.vel.z), damp(10, dt));
+  }
+  const lerpAngle = (a, b, t) => a + angDiff(b, a) * t;
+  function chaseDir(h, out) {      // straight at you when it can see you nearby, otherwise through the streets
+    _hv.set(P.pos.x - h.pos.x, 0, P.pos.z - h.pos.z); const d = _hv.length();
+    if (d < 1e-3) { out.set(0, 0, 0); return 0; }
+    if ((d < 14 && Math.abs(P.pos.y - h.pos.y) < 1.5 && h.losT > 0) || !navDir(h.pos, out)) out.copy(_hv).divideScalar(d);
+    return d;
+  }
+  function updateCrawler(h, dt) {
+    if (!h.alive) {       // dead: flipped over, legs curling, then gone
+      h.deadT += dt; h.g.rotation.z = lerp(h.g.rotation.z, Math.PI * 0.95, damp(6, dt)); h.g.position.y = h.pos.y + Math.min(0.5, h.deadT) * 0.9;
+      for (const L of h.parts.legs) { L.knee.rotation.z = lerp(L.knee.rotation.z, L.sx * 2.8, damp(3, dt)); }
+      if (h.deadT > 8) horrorOff(h);
+      return;
+    }
+    h.t += dt; h.cd -= dt; h.mem -= dt; h.sense -= dt; h.losT = (h.losT || 0) - dt;
+    const dx = P.pos.x - h.pos.x, dz = P.pos.z - h.pos.z, d = Math.hypot(dx, dz), dy = P.pos.y - h.pos.y;
+    // senses, a few times a second: they hear far better than they see
+    if (h.sense <= 0) {
+      h.sense = rand(0.18, 0.28);
+      const sightR = (lerp(40, 18, TOD.dark) + (torchOn ? 16 : 0)) * (P.crouch > 0.5 ? 0.6 : 1);
+      const sees = P.alive && d < sightR && clearLine(headOf(h), playerChest());
+      if (sees) { h.losT = 0.6; h.last.copy(P.pos); h.mem = 6; }
+      if (P.alive && d < HUNT.loud) { h.last.copy(P.pos); h.mem = Math.max(h.mem, 3); }
+      if (h.mem > 0 && h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.7) sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.5, rand(0.9, 1.1)); }
+      if (h.state === 'roam' && Math.random() < 0.06) sfxAt('crawl_hiss' + randi(0, 1), headOf(h), 0.9, rand(0.9, 1.1));
+    }
+    if (h.state === 'climb') {      // up the wall after you
+      h.pos.y += 3.6 * dt; h.g.rotation.x = lerp(h.g.rotation.x, -1.3, damp(10, dt)); h.vel.set(0, 0, 0);
+      if (Math.random() < dt * 8) sfxAt('crawl_step' + randi(0, 3), h.pos, 1.0, rand(1.0, 1.2));
+      if (h.pos.y >= P.pos.y - 0.05) { h.pos.y = P.pos.y; h.g.rotation.x = 0; h.state = 'hunt'; h.pos.x += Math.sign(dx) * Math.min(1.2, Math.abs(dx)); h.pos.z += Math.sign(dz) * Math.min(1.2, Math.abs(dz)); bounds(h.pos); }
+      else if (!P.alive || dy < 1) { h.state = 'hunt'; h.g.rotation.x = 0; }
+    } else if (h.state === 'wind') {        // crouches, screams, then springs
+      h.st += dt; h.vel.multiplyScalar(Math.exp(-dt * 10)); h.yaw = lerpAngle(h.yaw, Math.atan2(dx, dz), damp(14, dt));
+      if (h.st > 0.32) { h.state = 'lunge'; h.st = 0; h.vel.set(Math.sin(h.yaw) * 10, 0, Math.cos(h.yaw) * 10); h.hitDone = false; }
+    } else if (h.state === 'lunge') {
+      h.st += dt; h.pos.addScaledVector(h.vel, dt); collide(h.pos, h.vel, h.r, h.pos.y, 1.2); h.vel.multiplyScalar(Math.exp(-dt * 3));
+      if (!h.hitDone && P.alive && Math.hypot(P.pos.x - h.pos.x, P.pos.z - h.pos.z) < 1.25 && Math.abs(dy) < 1.4) {
+        h.hitDone = true; damagePlayer(Math.round(22 * DIFF[difficulty].dmg), h, 'crawler'); sfxAt('flesh' + randi(0, 3), playerChest(), 1.2, 0.8, { occlude: false, ref: 1 });
+        Wp.punchP += 0.05; Wp.punchY += rand(-0.08, 0.08);
+      }
+      if (h.st > 0.35) { h.state = 'hunt'; h.cd = rand(0.9, 1.4); }
+    } else {
+      // roam: wander the streets; hunt: chase down whatever it last heard or saw
+      let speed = 1.5;
+      if (h.state === 'hunt') {
+        if (h.mem > 0) { chaseDir(h, _hd); speed = 6.2 * (TOD.dark > 0.45 ? 1 : 0.85); }
+        else { _hd.set(h.last.x - h.pos.x, 0, h.last.z - h.pos.z); const l = _hd.length(); if (l < 2 || h.mem < -12) { h.state = 'roam'; h.goal = null; } else _hd.divideScalar(l); speed = 3.5; }
+        if (h.mem > 0 && P.alive && d < 2.6 && Math.abs(dy) < 1.2 && h.cd <= 0) { h.state = 'wind'; h.st = 0; sfxAt('crawl_lunge', headOf(h), 1.6, rand(0.9, 1.1)); }
+        else if (h.mem > 0 && P.alive && dy > 2 && d < 3.5) { h.state = 'climb'; sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.4, 0.85); }
+      } else {
+        if (!h.goal || h.pos.distanceTo(h.goal) < 2 || Math.random() < dt * 0.05) h.goal = navRandomNear(h.pos, 8, 30);
+        if (h.goal) { _hd.set(h.goal.x - h.pos.x, 0, h.goal.z - h.pos.z).normalize(); } else _hd.set(0, 0, 0);
+        if (Math.random() < dt * 0.3) speed = 0;      // stops, listens
+      }
+      // a crawler that drops off a roof lands on the street
+      if (h.pos.y > 0.2 && (dy < -1 || !P.alive)) { const s = support(h.pos, 0.3); if (h.pos.y > s + 0.2) { h.pos.y = Math.max(s, h.pos.y - 9 * dt); } }
+      moveHorror(h, _hd, speed, dt);
+      if (h.pos.y < 2) h.pos.y = Math.max(support(h.pos, 0.3), 0);
+      // footsteps: a fast patter of taps
+      h.stepT = (h.stepT || 0) - dt * Math.hypot(h.vel.x, h.vel.z);
+      if (h.stepT <= 0 && Math.hypot(h.vel.x, h.vel.z) > 0.5) { h.stepT = 0.55; if (d < 40) sfxAt('crawl_step' + randi(0, 3), h.pos, 1.1, rand(0.9, 1.2), { ref: 2.5, wet: 0.4 }); }
+    }
+    h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
+    poseCrawler(h, dt);
+  }
+  // the Still moves only while you're not looking. Look back and it's closer, and in a new pose.
+  function updateStill(h, dt) {
+    if (!h.alive) return;
+    const head = headOf(h), chest = tmp.set(h.pos.x, h.pos.y + 1.3, h.pos.z).clone();
+    const blink = NV.t > 0;      // the goggles flipping is a blink
+    const seen = !blink && P.alive && (seenByPlayer(head) || seenByPlayer(chest));
+    const d = Math.hypot(P.pos.x - h.pos.x, P.pos.z - h.pos.z);
+    if (seen) {
+      if (h.moved > 1.2) { sfxAt('still_scrape' + randi(0, 1), chest, d < 12 ? 1.6 : 1.1, rand(0.9, 1.05), { ref: 4 }); if (d < 25) { FIG.heartRate = Math.max(FIG.heartRate, 0.9); FIG.heartT = Math.min(FIG.heartT, 0.2); } }
+      h.moved = 0; h.vel.set(0, 0, 0);
+    } else if (P.alive) {
+      if (h.moved === 0) poseStill(h, randi(0, STILL_POSES.length - 1));
+      const before = h.pos.clone();
+      chaseDir(h, _hd); moveHorror(h, _hd, d > 30 ? 11 : 7.5, dt, 30);
+      h.moved += before.distanceTo(h.pos);
+      h.yaw = Math.atan2(P.pos.x - h.pos.x, P.pos.z - h.pos.z);
+      if (d < 1.4 && Math.abs(P.pos.y - h.pos.y) < 1.5) {        // it got you
+        sfx('still_hit', 1.2, 1, 0, 0, 0.3); damagePlayer(Math.round(45 * DIFF[difficulty].dmg), h, 'still');
+        hurtFlash = 1; Wp.punchP += 0.12; FIG.heartRate = 1.4;
+        const far = unseenSpot(60, 90); if (far) { h.pos.copy(far); h.moved = 0; }
+        h.cool = 25; h.g.visible = false;
+      }
+    }
+    if (h.cool > 0) { h.cool -= dt; if (h.cool <= 0) h.g.visible = true; else { h.g.position.set(0, -50, 0); return; } }
+    h.losT = 1;       // it always knows where you are
+    h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
+  }
+  // wailers watch the streets from the rooftops. If one sees you it draws breath, then screams every crawler onto you.
+  function updateWailer(h, dt) {
+    if (!h.alive) {
+      if (h.state === 'dead') {        // falls off the roof
+        h.deadT += dt; h.vel.y -= 14 * dt; h.pos.addScaledVector(h.vel, dt); const s = support(h.pos, 0.3);
+        if (h.pos.y <= s) { h.pos.y = s; h.vel.set(0, 0, 0); if (!h.landed) { h.landed = true; sfxAt('land_con', h.pos, 1.6, 0.7); } }
+        h.g.position.copy(h.pos); h.g.rotation.x = Math.min(1.5, h.deadT * 2.5);
+        if (h.deadT > 10) { horrorOff(h); h.landed = false; }
+      }
+      return;
+    }
+    h.t += dt; h.cd -= dt;
+    const head = headOf(h), d = P.pos.distanceTo(h.pos);
+    const { neck, head: hd, jaw, throat } = h.parts;
+    if (h.state === 'idle') {
+      neck.rotation.y = Math.sin(h.t * 0.4) * 0.5; hd.rotation.z = Math.sin(h.t * 0.9) * 0.2; jaw.rotation.x = lerp(jaw.rotation.x, 0.1, damp(4, dt));
+      throat.material.color.setRGB(0.25, 0.03, 0.02);
+      h.sense -= dt;
+      if (h.sense <= 0 && h.cd <= 0 && P.alive) {
+        h.sense = 0.3;
+        const lit = TOD.dark < 0.45 || torchOn || simTime - (P.firedAt || -9) < 1.5 || d < 26;
+        if (d < 60 && lit && clearLine(head, playerChest())) { h.state = 'inhale'; h.st = 0; sfxAt('wail_in', head, 1.6, 1, { ref: 10, wet: 0.8 }); }
+      }
+    } else if (h.state === 'inhale' || h.state === 'wail') {
+      h.st += dt;
+      _hd.copy(P.pos).sub(h.pos); neck.rotation.y = lerp(neck.rotation.y, clamp(angDiff(Math.atan2(_hd.x, _hd.z), h.yaw), -0.8, 0.8), damp(4, dt));
+      const k = h.state === 'inhale' ? h.st / 1.3 : 1;
+      jaw.rotation.x = h.state === 'wail' ? 1.1 + Math.sin(h.t * 30) * 0.08 : 0.15 + k * 0.5;
+      throat.material.color.setRGB(0.4 + k * 3, 0.05 + k * 0.4, 0.03 + k * 0.1);
+      wailLight.position.copy(head); wailLight.intensity = k * (h.state === 'wail' ? 2.6 + Math.sin(h.t * 25) * 0.6 : 1.2);
+      if (h.state === 'inhale' && h.st > 1.3) {
+        h.state = 'wail'; h.st = 0; sfxAt('wail', head, 3.2, rand(0.95, 1.05), { ref: 30, roll: 0.8, max: 500, wet: 1.2 });
+        toast('Something is screaming<small>Everything nearby knows where you are</small>', 2.2);
+        for (const c of HZ) if (c.alive && c.kind === 'crawler' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = 9; c.state = c.state === 'roam' ? 'hunt' : c.state; }
+        HUNT.extra = Math.max(HUNT.extra, 2); HUNT.spawnT = Math.min(HUNT.spawnT, 1);
+      }
+      if (h.state === 'wail') { if (h.st > 0.5 && Math.random() < dt * 4) for (const c of HZ) if (c.alive && c.kind === 'crawler' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = Math.max(c.mem, 6); } if (h.st > 3.8) { h.state = 'idle'; h.cd = 15; wailLight.intensity = 0; } }
+    }
+    h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
+  }
+  function freePerch(avoidNear) {
+    const used = new Set(HZ.filter(h => h.kind === 'wailer' && h.alive).map(h => h.perch));
+    const ok = CITY.perches.filter(p => !used.has(p) && p.p.distanceTo(P.pos) > (avoidNear ? 70 : 30));
+    return ok.length ? pick(ok) : null;
+  }
+
+  // ---------------------------------------------------------------- the objective: radios, then evac
+  const RADIO_M = { box: mat(0x3b4430, 0.7, 0.2), led: new THREE.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false }), ledOk: new THREE.MeshBasicMaterial({ color: 0x3aff6a, toneMapped: false }) };
+  function buildRadio() {
+    const g = new THREE.Group();
+    hmesh(new THREE.BoxGeometry(0.9, 0.55, 0.6), M.ammo, g, [0, 0.27, 0]);                                    // crate
+    hmesh(new THREE.BoxGeometry(0.5, 0.3, 0.32), RADIO_M.box, g, [0, 0.7, 0]);                                // field radio
+    for (let k = 0; k < 3; k++) hmesh(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 8).rotateX(Math.PI / 2), M.steel, g, [-0.15 + k * 0.08, 0.75, 0.165]);
+    hmesh(new THREE.BoxGeometry(0.14, 0.08, 0.01), M.glassLight, g, [0.13, 0.76, 0.162]);
+    hmesh(new THREE.CylinderGeometry(0.006, 0.01, 1.4, 4), M.iron, g, [0.2, 1.5, -0.1], [0.12, 0, -0.1]);
+    const led = hmesh(new THREE.SphereGeometry(0.025, 6, 4), RADIO_M.led, g, [-0.18, 0.88, 0.1]);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: poolTex, color: 0xff3020, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
+    glow.scale.set(1.4, 1.4, 1); glow.position.set(-0.18, 0.9, 0.1); g.add(glow);
+    scene.add(g); g.visible = false;
+    return { g, led, glow, p: new V3(), prog: 0, done: false, name: '' };
+  }
+  const RADIOS = [buildRadio(), buildRadio(), buildRadio()];
+  const EVAC = { g: new THREE.Group(), p: new V3(), name: '', on: false, hold: 0, need: 60, heli: null };
+  { const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: poolTex, color: 0xff3a22, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
+    fl.scale.set(5, 5, 1); fl.position.y = 0.4; EVAC.g.add(fl); EVAC.flare = fl;
+    EVAC.light = new THREE.PointLight(0xff3a22, 0, 22, 2); EVAC.light.position.y = 1; EVAC.g.add(EVAC.light);
+    hmesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 6), mat(0xb02020, 0.6), EVAC.g, [0, 0.15, 0], [0.4, 0, 0.3]);
+    EVAC.heli = new THREE.SpotLight(0xf2f6ff, 0, 90, 0.32, 0.6, 1.2); EVAC.heli.position.set(0, 60, 0); EVAC.g.add(EVAC.heli, EVAC.heli.target);
+    scene.add(EVAC.g); EVAC.g.visible = false; }
+  // HUD markers for the radios and the evac point
+  const markEls = [0, 1, 2, 3].map(() => { const el = document.createElement('div'); el.className = 'mk'; el.innerHTML = '<i></i><span></span>'; $('marks').appendChild(el); return el; });
+  function updateMarks() {
+    const pts = HUNT.on && inRun && !gameOver ? (EVAC.on ? [{ p: EVAC.p, label: 'Evac' }] : RADIOS.filter(r => !r.done && r.g.visible).map(r => ({ p: r.p, label: 'Radio' }))) : [];
+    const w = window.innerWidth, hgt = window.innerHeight;
+    markEls.forEach((el, i) => {
+      const m = pts[i]; if (!m) { el.style.display = 'none'; return; }
+      el.style.display = '';
+      const v = tmp.set(m.p.x, m.p.y + 1.6, m.p.z).project(cam), behind = v.z > 1;
+      let x = (v.x * 0.5 + 0.5) * w, y = (-v.y * 0.5 + 0.5) * hgt;
+      if (behind) { x = w - x; y = hgt - 40; }
+      x = clamp(x, 30, w - 30); y = clamp(y, 40, hgt - 60);
+      el.style.transform = `translate(${x}px, ${y}px)`;
+      el.lastChild.textContent = `${m.label} · ${Math.round(Math.hypot(m.p.x - P.pos.x, m.p.z - P.pos.z))} m`;
+    });
+  }
+  function nearRadio() { return RADIOS.find(r => !r.done && r.g.visible && Math.hypot(r.p.x - P.pos.x, r.p.z - P.pos.z) < 2.3 && Math.abs(r.p.y - P.pos.y) < 2); }
+
+  // ---------------------------------------------------------------- the mode itself
+  Object.assign(HUNT, { kills: 0, signals: 0, nights: 0, wasNight: false, loud: 0, spawnT: 3, extra: 0, txT: 0, navT: 0, won: false });
+  function huntEnter(on) {          // switch the world over (and build the city the first time)
+    if (on && !HUNT.built) { buildCity(); HUNT.built = true; }
+    HUNT.on = on;
+    setLayer(AVE, !on); if (CITY.layer) setLayer(CITY.layer, on);
+    for (const h of HZ) horrorOff(h);
+    for (const r of RADIOS) r.g.visible = false; EVAC.g.visible = false; EVAC.on = false; wailLight.intensity = 0;
+    if (on) navBuild();
+  }
+  function huntReset() {
+    huntEnter(MODE === 'hunt');
+    if (!HUNT.on) return;
+    Object.assign(HUNT, { kills: 0, signals: 0, nights: 0, wasNight: false, loud: 0, spawnT: 3, extra: 0, txT: 0, navT: 0, won: false });
+    P.pos.set(0, 0, 70); P.yaw = 0; TOD.th = 0.32; TOD.skyT = 0; updateDayNight(0);
+    // three radios, spread out, none right where you start
+    const spots = CITY.spots.slice().sort(() => Math.random() - 0.5), chosen = [];
+    for (const s of spots) if (chosen.length < 3 && s.p.distanceTo(P.pos) > 50 && chosen.every(c => c.p.distanceTo(s.p) > 70)) chosen.push(s);
+    for (const s of spots) if (chosen.length < 3 && !chosen.includes(s)) chosen.push(s);
+    chosen.forEach((s, i) => { const r = RADIOS[i]; r.p.copy(s.p); r.p.y = support(new V3(s.p.x, 2, s.p.z), 0.3); r.g.position.copy(r.p); r.g.rotation.y = rand(0, 6); r.g.visible = true; r.done = false; r.prog = 0; r.name = s.name; r.led.material = RADIO_M.led; r.glow.material.color.setHex(0xff3020); });
+    // wailers on three rooftops, the Still far off until night
+    for (const h of HZ.filter(h => h.kind === 'wailer')) { const pr = freePerch(true); if (pr) { horrorOn(h, pr.p, { state: 'idle', yaw: pr.yaw }); h.perch = pr; h.cd = 4; } }
+    HUNT.navT = 0; navFlow();
+  }
+  function huntNightCount() { const n = TOD.dark > 0.45; if (n && !HUNT.wasNight) HUNT.nights++; HUNT.wasNight = n; return n; }
+  function updateHunt(dt) {
+    if (!HUNT.on || !inRun) { updateMarks(); return; }
+    const night = huntNightCount();
+    // how far your noise carries: sprinting, walking, crouching, shooting, the radio
+    const hs = Math.hypot(P.vel.x, P.vel.z);
+    HUNT.loud = !P.alive ? 0 : simTime - (P.firedAt || -9) < 0.6 ? 70 : HUNT.txT > 0 ? 55 : hs > 5 ? 20 : hs > 1 ? (P.crouch > 0.5 ? 3 : 9) : 0;
+    HUNT.txT -= dt;
+    // the flow field, refreshed a few times a second
+    HUNT.navT -= dt; if (HUNT.navT <= 0) { HUNT.navT = 0.35; navFlow(); }
+    // crawlers: a couple by day, a pack by night, more each night, and more when something has screamed
+    const alive = HZ.filter(h => h.kind === 'crawler' && h.alive).length;
+    const want = (night ? 5 + Math.min(4, HUNT.nights - 1) : 2) + HUNT.extra + (EVAC.on && EVAC.hold > 0 ? 4 : 0);
+    HUNT.spawnT -= dt;
+    if (HUNT.spawnT <= 0 && P.alive && !gameOver) {
+      HUNT.spawnT = night ? rand(4, 8) : rand(10, 16);
+      if (alive < Math.min(12, want)) { const h = HZ.find(h => h.kind === 'crawler' && !h.active); const p = unseenSpot(45, 85); if (h && p) { horrorOn(h, p); if (EVAC.hold > 0) { h.mem = 8; h.last.copy(P.pos); h.state = 'hunt'; } } }
+      if (HUNT.extra > 0) HUNT.extra = Math.max(0, HUNT.extra - 0.5);
+    }
+    // the Still comes out after dark and goes again at dawn
+    const still = HZ.find(h => h.kind === 'still');
+    if (night && !still.active) { const p = unseenSpot(55, 85); if (p) { horrorOn(still, p); still.moved = 0; still.cool = 0; poseStill(still, 0); } }
+    else if (!night && still.active && !seenByPlayer(headOf(still))) horrorOff(still);
+    // wailers come back at a new perch a while after they're shot
+    for (const h of HZ) if (h.kind === 'wailer' && !h.active && h.respawn !== undefined) { h.respawn -= dt; if (h.respawn <= 0) { const pr = freePerch(true); if (pr) { horrorOn(h, pr.p, { state: 'idle', yaw: pr.yaw }); h.perch = pr; h.cd = 6; } delete h.respawn; } }
+    for (const h of HZ) if (h.active) { if (h.kind === 'crawler') updateCrawler(h, dt); else if (h.kind === 'still') updateStill(h, dt); else updateWailer(h, dt); }
+    // crawlers that wander too far from you slip away
+    for (const h of HZ) if (h.kind === 'crawler' && h.alive && h.state === 'roam' && h.pos.distanceTo(P.pos) > 120) horrorOff(h);
+    // radios: hold E to call for help. It takes a while and it's loud.
+    const r = nearRadio();
+    if (r && P.alive && keys.has('KeyE')) {
+      r.prog += dt / 6; HUNT.txT = 0.3; hud.rbar.style.opacity = 1; hud.rfill.style.width = (r.prog * 100).toFixed(0) + '%';
+      r.txS = (r.txS || 0) - dt; if (r.txS <= 0) { r.txS = 1.3; sfxAt('radio_tx', r.p.clone().add(tmp.set(0, 0.8, 0)), 1.2, rand(0.97, 1.03), { ref: 3 }); huntNoise(P.pos, 55); }
+      if (r.prog >= 1) {
+        r.done = true; HUNT.signals++; r.led.material = RADIO_M.ledOk; r.glow.material.color.setHex(0x30ff60); sfx('radio_ok', 1.2, 1, 0.15, 0, 0.2);
+        if (HUNT.signals < 3) toast(`Call ${HUNT.signals} of 3 got through<small>${3 - HUNT.signals} more radio${HUNT.signals === 2 ? '' : 's'} to go</small>`, 3);
+        else { const e = CITY.evacs.slice().sort((a, b) => b.p.distanceTo(P.pos) - a.p.distanceTo(P.pos))[1] || CITY.evacs[0];
+          EVAC.p.copy(e.p); EVAC.name = e.name; EVAC.g.position.copy(e.p); EVAC.g.visible = true; EVAC.on = true; EVAC.hold = 0;
+          toast(`They heard you<small>Evac at ${e.name}. Get there and hold out for 60 seconds.</small>`, 4.5); feed('Evac is on its way'); }
+      }
+    } else if (r && P.alive && promptT <= 0) showPrompt(r.prog > 0 ? `Hold E to keep calling · ${Math.round(r.prog * 100)}%` : 'Hold E to call for help on the radio (it’s loud)', 0.3);
+    for (const R of RADIOS) if (R.g.visible && !R.done) { const on = Math.sin(simTime * 6) > 0.2; R.led.visible = on; R.glow.visible = on; }
+    // evac: hold out in the circle while the helicopter comes in
+    if (EVAC.on) {
+      EVAC.flare.material.opacity = 0.75 + Math.sin(simTime * 23) * 0.15 + Math.random() * 0.1; EVAC.light.intensity = 1.6 + Math.random() * 0.5;
+      const inside = Math.hypot(EVAC.p.x - P.pos.x, EVAC.p.z - P.pos.z) < 9 && P.alive;
+      if (inside) {
+        if (EVAC.hold === 0) { toast('Hold out<small>Stay near the flare until the helicopter gets here</small>', 3); HUNT.extra = 3; HUNT.spawnT = 0.5; }
+        EVAC.hold += dt; huntNoise(P.pos, 90);
+      }
+      const k = clamp((EVAC.hold - EVAC.need + 12) / 12, 0, 1);       // the last twelve seconds: the searchlight sweeps in from above
+      EVAC.heli.intensity = k * 6 * (0.85 + Math.sin(simTime * 41) * 0.15); EVAC.heli.position.set(Math.sin(simTime * 0.7) * 6 * (1 - k), 45, Math.cos(simTime * 0.5) * 6 * (1 - k));
+      EVAC.heli.target.position.set(P.pos.x - EVAC.p.x, 0, P.pos.z - EVAC.p.z);
+      if (EVAC.hold >= EVAC.need && !HUNT.won && P.alive) { HUNT.won = true; for (const h of HZ) if (h.kind === 'crawler' && h.alive) { h.mem = 0; h.state = 'roam'; } endGame(true); }
+    }
+    updateMarks();
+  }
+  function huntStatus() {
+    hud.slabel.textContent = `Hunted · ${clockText()}`;
+    hud.sbig.textContent = EVAC.on ? (EVAC.hold > 0 ? `Hold out ${Math.ceil(Math.max(0, EVAC.need - EVAC.hold))}` : 'Get to the evac') : `Radios ${HUNT.signals} / 3`;
+    hud.ssub.textContent = fmtT(stats.t) + (HUNT.nights ? ` · night ${HUNT.nights}` : '') + (HUNT.kills ? ` · ${HUNT.kills} down` : '');
+  }
+  function huntEndText(won, killer) {
+    const how = !killer ? 'The fall finished you' : killer.kind === 'still' ? 'You looked away from the Still' : killer.kind === 'figure' ? 'The figure found you' : 'The crawlers caught you';
+    return won ? `The helicopter lifted you out of ${EVAC.name} after ${fmtT(stats.t)}, ${HUNT.nights} night${HUNT.nights === 1 ? '' : 's'} in. You put down ${HUNT.kills} of them.`
+      : `${how} at ${clockText()}, with ${HUNT.signals} of 3 calls made. Keep quiet, keep the goggles handy, and don't take your eyes off the tall one.`;
+  }
+
   // ================================================================ main loop
   function resize() { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); cam.aspect = vCam.aspect = w / h; cam.updateProjectionMatrix(); vCam.updateProjectionMatrix(); }
   window.addEventListener('resize', resize); resize();
@@ -2657,7 +3454,7 @@ const SND = __SOUNDS__;
   }
   function step(now) {
     const rawDt = (now - last) / 1000; fpsAvg = fpsAvg * 0.95 + Math.min(rawDt, 0.25) * 0.05;
-    let dt = Math.min(0.05, rawDt); last = now;
+    let dt = clamp(rawDt, 0, 0.05); last = now;      // never negative (the debug channel's sim can run the clock ahead of the screen's)
     const live = playing || (gameOver && dt > 0);
     if (!live) dt = 0;
     simTime += dt;
@@ -2756,6 +3553,7 @@ const SND = __SOUNDS__;
     }
 
     if (dt > 0) { updateDayNight(dt); updateFigure(dt); }
+    updateHunt(dt);
 
     // --- enemies (if you camp up high, one of them climbs up after you)
     if (dt > 0) {
@@ -2770,7 +3568,7 @@ const SND = __SOUNDS__;
         }
       }
       for (const b of bots) if (b.active) updateBot(b, dt);
-      if (inRun && !gameOver && WAVE.phase !== 'fight' && !NET.on) { WAVE.t -= dt; if (WAVE.t <= 0) startWave(); }
+      if (inRun && !gameOver && WAVE.phase !== 'fight' && !NET.on && !HUNT.on) { WAVE.t -= dt; if (WAVE.t <= 0) startWave(); }
     }
     if (NET.on) netUpdate(dt > 0 ? dt : clamp(rawDt, 0, 0.1));
 
@@ -2906,7 +3704,7 @@ const SND = __SOUNDS__;
     }
     const left = bots.filter(b => b.alive).length;
     rosterEl.style.visibility = bots.some(b => b.active) ? 'visible' : 'hidden';
-    if (NET.on) netHud(); else {
+    if (NET.on) netHud(); else if (HUNT.on) huntStatus(); else {
     hud.slabel.textContent = WAVE.n ? `Wave ${WAVE.n} · ${clockText()}` : `Last Light Avenue · ${clockText()}`;
     hud.sbig.textContent = WAVE.phase === 'fight' ? `${left} hostile${left === 1 ? '' : 's'}` : WAVE.n ? `Next wave ${Math.ceil(Math.max(0, WAVE.t))}` : `Wave 1 in ${Math.ceil(Math.max(0, WAVE.t))}`;
     hud.ssub.textContent = fmtT(stats.t) + (WAVE.best ? ` · best ${WAVE.best}` : ''); }
@@ -2920,6 +3718,8 @@ const SND = __SOUNDS__;
       const near = FIG.g.visible ? 1 - FIG.D / 72 : 0;
       nvMat.uniforms.uNoise.value = 0.16 + near * 0.16 + FIG.glitch * 1.5 + (FIG.scareT > 0.75 ? (FIG.scareT - 0.75) * 0.8 : 0); nvMat.uniforms.uTear.value = near * near * near * 0.3 + FIG.glitch * 3 + (FIG.scareT > 0 ? (FIG.scareT < 0.75 ? 0.04 : (FIG.scareT - 0.75) * 4) : 0);   // the scare: a clear look at its face first, then the tube falls apart
       nvMat.uniforms.uTime.value = simTime + now * 0.001; nvMat.uniforms.uGain.value = lerp(2.2, 13, TOD.dark) * (torchOn ? 0.8 : 1);
+      const blind = clamp((0.45 - TOD.dark) / 0.35, 0, 1); nvMat.uniforms.uBlind.value = blind;
+      if (blind > 0.5 && !NV.blindTold) { NV.blindTold = true; toast('Too bright for night vision<small>Press N to take the goggles off</small>', 2.5); }
       renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, cam); renderer.clearDepth();
       if (P.alive && vmRoot.visible) renderer.render(vScene, vCam);
       renderer.setRenderTarget(null); renderer.clear(); nvMat.uniforms.tDiffuse.value = rt.texture; renderer.render(nvScene, nvCam);
@@ -3319,12 +4119,14 @@ const SND = __SOUNDS__;
   $('roomcode').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10); saveNet(); });
   $('newcode').addEventListener('click', () => { $('roomcode').value = Array.from({ length: 5 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[randi(0, 30)]).join(''); saveNet(); });
   function saveNet() { try { localStorage.setItem('lla-net', JSON.stringify({ n: NET.name, c: NET.color, r: $('roomcode').value })); } catch (_) {} }
+  const HUNT_DESC = 'The barricades are down and the avenue runs on into the city. It’s nearly dark, and things live here now: crawlers that hunt by sound, wailers on the rooftops that scream them onto you, a tall pale thing that only moves when you aren’t looking at it, and the figure, still waiting behind your goggles. Find three radios and call for help, then hold out at the evac flare until the helicopter comes. Shooting is loud. So is the radio.';
   function setMode(m) {
     if (inRun) return;
-    MODE = m;
+    const was = MODE; MODE = m;
     for (const b of $('mode').children) b.setAttribute('aria-pressed', String(b.dataset.m === m));
     $('netbox').hidden = m !== 'dm';
-    $('mdesc').textContent = m === 'dm' ? DM_DESC : SOLO_DESC;
+    $('mdesc').textContent = m === 'dm' ? DM_DESC : m === 'hunt' ? HUNT_DESC : SOLO_DESC;
+    if ((was === 'hunt') !== (m === 'hunt')) resetGame();
     goBtn.textContent = m === 'dm' ? 'Join match' : 'Click to deploy';
     $('diffrow').hidden = m === 'dm';
     renderNetInfo();
@@ -3366,10 +4168,14 @@ const SND = __SOUNDS__;
       if (c === 'leaveNet') { $('leave').click(); }
       if (c === 'netClock') { if (NET.M) NET.M.t = d.t; }
       if (c === 'pause') { playing = false; }
+      if (c === 'god') { dbgGod = !!d.on; }
       if (c === 'norender') { dbgNoRender = !!d.on; }
       if (c === 'tod') { TOD.th = d.th; TOD.skyT = 0; updateDayNight(0); }
       if (c === 'nv') { toggleNV(); }
       if (c === 'audiotest') { audioTest = true; }
+      if (c === 'hunt') { setMode('hunt'); if (d.start !== false) { initAudio(); inRun = true; playing = true; setMenu(false); } }
+      if (c === 'horror') { const h = HZ.find(x => x.kind === d.kind && (!x.active || x.kind === 'still')); if (h) { cam.getWorldDirection(fwd); const D = d.D || 10, at = new V3(P.pos.x + fwd.x * D, d.y || 0, P.pos.z + fwd.z * D); horrorOn(h, at, { state: d.state || 'roam', yaw: Math.atan2(P.pos.x - at.x, P.pos.z - at.z) }); if (h.kind === 'still') { h.moved = 0; h.cool = 0; poseStill(h, d.pose || 0); } if (d.mem) { h.mem = d.mem; h.last.copy(P.pos); } } }
+      if (c === 'radio') { const r = RADIOS[d.i || 0]; if (d.done) { for (const R of RADIOS) R.prog = R.done ? 1 : R.prog; } P.pos.set(r.p.x + 1.2, r.p.y, r.p.z + 1.2); P.yaw = Math.atan2(-(r.p.x - P.pos.x), -(r.p.z - P.pos.z)); }
       if (c === 'figD') { FIG.D = d.D; FIG.active = true; placeFigure(); }
       if (c === 'forget') { try { localStorage.removeItem('lla-best'); localStorage.removeItem('lla-loadout'); } catch (_) {} WAVE.best = 0; Wp.loadout = ['carbine', 'sniper']; renderLoadout(); }
       if (c === 'climb') { if (P.climb) leaveLadder(); else { const n = nearLadder(); if (n) grabLadder(n); } }
@@ -3409,7 +4215,7 @@ const SND = __SOUNDS__;
         skipRender = false;
         if (d.fire) { for (let k = 0; k < d.fire; k++) if (Wp.mag > 0 && !Wp.reloading) shoot(); }
       }
-      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, stalk: +FIG.stalkT.toFixed(1), cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
+      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, hunt: HUNT.on ? { kills: HUNT.kills, signals: HUNT.signals, nights: HUNT.nights, loud: HUNT.loud, evac: EVAC.on ? { p: v(EVAC.p), hold: +EVAC.hold.toFixed(1) } : null, radios: RADIOS.map(r => ({ p: v(r.p), prog: +r.prog.toFixed(2), done: r.done, name: r.name })), hz: HZ.filter(h => h.active).map(h => ({ k: h.kind, st: h.state, alive: h.alive, hp: Math.round(h.hp), p: v(h.pos), d: +h.pos.distanceTo(P.pos).toFixed(1) })), spots: CITY.spots.length, perches: CITY.perches.length, lamps: LAMPS.length } : null, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
         P: { pos: v(P.pos), yaw: +P.yaw.toFixed(2), pitch: +P.pitch.toFixed(2), hp: Math.round(P.hp), alive: P.alive }, weapon: Wp.cur, ads: +Wp.ads.toFixed(2), bolt: +Wp.boltT.toFixed(2), fov: +cam.fov.toFixed(1), mag: Wp.mag, reserve: Wp.reserve, reloading: Wp.reloading,
         bots: bots.map(b => ({ n: b.team.name, pos: v(b.pos), hp: b.hp, alive: b.alive, st: b.state, sees: b.sees, aware: +b.aware.toFixed(2), crouch: +b.crouch.toFixed(2), cover: !!b.cover, shots: b.shots })) });
     } catch (err) { reply({ error: String(err && err.stack || err) }); }
