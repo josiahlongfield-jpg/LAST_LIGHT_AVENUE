@@ -1785,8 +1785,8 @@ const SND = __SOUNDS__;
     ric0: 0.45, ric1: 0.45, ric2: 0.45, ric3: 0.45, imp_con0: 0.5, imp_con1: 0.5, imp_con2: 0.5, imp_con3: 0.5, imp_met0: 0.45, imp_met1: 0.45,
     siren: 0.5, alarm: 0.35, bells: 0.4,
     fig_step0: 0.55, fig_step1: 0.55, fig_step2: 0.55, fig_step3: 0.55, fig_breath0: 0.5, fig_breath1: 0.5, fig_breath2: 0.5, fig_sting: 0.95, heart: 0.6, nv_glitch: 0.45,
-    crawl_step0: 0.4, crawl_step1: 0.4, crawl_step2: 0.4, crawl_step3: 0.4, crawl_screech0: 0.75, crawl_screech1: 0.75, crawl_screech2: 0.75, crawl_hiss0: 0.4, crawl_hiss1: 0.4,
-    crawl_lunge: 0.8, crawl_die: 0.7, still_scrape0: 0.7, still_scrape1: 0.7, still_hit: 1.0, wail_in: 0.6, wail: 1.0, radio_tx: 0.45, radio_ok: 0.6 };
+    husk_moan0: 0.6, husk_moan1: 0.6, husk_moan2: 0.6, husk_alert0: 0.7, husk_alert1: 0.7, husk_rise: 0.7, husk_die: 0.75, husk_drag0: 0.35, husk_drag1: 0.35,
+    still_scrape0: 0.7, still_scrape1: 0.7, still_hit: 1.0, wail_in: 0.6, wail: 1.0, radio_tx: 0.45, radio_ok: 0.6 };
   // real recordings, scheduled against reload / bolt progress: [progress, sound or [variants], gain, extra delay, only when reloading from empty]
   const RELOAD_SFX = {
     carbine: [[0.07, 'c_magout', 1], [0.53, ['c_magin', 'c_magin2'], 1], [0.8, 'c_boltrel', 1, 0, true]],
@@ -2074,7 +2074,15 @@ const SND = __SOUNDS__;
     const pSpeed = Math.hypot(P.vel.x, P.vel.z);
     let sigma = (0.014 + dist * 0.0005) * (1 + pSpeed * 0.22) * (P.crouch > 0.5 ? 0.85 : 1) * D.acc * b.skill * (b.marksman ? 0.4 : 1);
     sigma *= Math.max(0.6, 1.5 - b.exposure * 0.18) * (b.speedNow > 0.5 ? 1.6 : 1) * (1 + b.flinch * 2) * (b.nvg || torchOn ? 1 : lerp(1, 1.7, TOD.dark));
-    const dir = target.clone().sub(from).normalize();
+    b.flashT = 0.05; b.shots++; enemyFlash.position.copy(from); enemyFlash.intensity = 3.2 * (0.3 + TOD.dark);
+    sfxAt(b.marksman ? (dist > 32 ? 'far_s' : 'shot_s') : (dist > 32 ? 'far_c' : 'shot_c' + Math.floor(Math.random() * 3)), from, b.marksman ? 2.2 : 1.9, rand(0.96, 1.04), { ref: 12, roll: 0.9 });
+    const r = shotAtPlayer(from, sigma);
+    if (r.hit) damagePlayer((b.marksman ? randi(34, 48) : randi(9, 15)) * D.dmg, b);
+    if (b.marksman || b.shots % 2 === 0) tracer(from, r.end, true);
+  }
+  // one enemy bullet: scattered by sigma, stopped by walls, and a crack past your ear if it only just misses
+  function shotAtPlayer(from, sigma) {
+    const dir = playerChest().sub(from).normalize();
     tmp.set(gauss() * sigma, gauss() * sigma, gauss() * sigma); dir.add(tmp).normalize();
     ray.set(from, dir); ray.far = 300;
     const wh = ray.intersectObjects(occluders, false);
@@ -2089,18 +2097,14 @@ const SND = __SOUNDS__;
     const pa = from.clone().addScaledVector(dir, sc), pb = a.clone().addScaledVector(seg, tc);
     const miss = pa.distanceTo(pb);
     const hitPlayer = miss < 0.3 && sc < wallD && P.alive;
-    b.flashT = 0.05; b.shots++; enemyFlash.position.copy(from); enemyFlash.intensity = 3.2 * (0.3 + TOD.dark);
-    sfxAt(b.marksman ? (dist > 32 ? 'far_s' : 'shot_s') : (dist > 32 ? 'far_c' : 'shot_c' + Math.floor(Math.random() * 3)), from, b.marksman ? 2.2 : 1.9, rand(0.96, 1.04), { ref: 12, roll: 0.9 });
     let end;
-    if (hitPlayer) {
-      end = pb;
-      damagePlayer((b.marksman ? randi(34, 48) : randi(9, 15)) * D.dmg, b);
-    } else {
+    if (hitPlayer) end = pb;
+    else {
       end = wh.length ? wh[0].point : from.clone().addScaledVector(dir, 120);
       if (wh.length) impact(wh[0]);
       if (miss < 2.5 && sc < wallD) { sfxAt('crack' + Math.floor(Math.random() * 3), pa, 1.2 - miss / 3, rand(0.9, 1.15), { occlude: false, ref: 1.5, instant: true, wet: 0.5 }); Wp.punchY += rand(-0.004, 0.004); }
     }
-    if (b.marksman || b.shots % 2 === 0) tracer(from, end, true);
+    return { hit: hitPlayer, end };
   }
 
   let dbgGod = false;      // debug channel: take no damage (for long automated runs)
@@ -2316,9 +2320,9 @@ const SND = __SOUNDS__;
   const enemyTracerMat = new THREE.MeshBasicMaterial({ color: 0xff7a4a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
   const tracerGeo = new THREE.BoxGeometry(0.014, 0.014, 1); tracerGeo.translate(0, 0, -0.5);
   const tracers = [];
-  function tracer(from, to, enemy) {
+  function tracer(from, to, enemy, mtl) {
     const len = from.distanceTo(to); if (len < 2) return;
-    const m = new THREE.Mesh(tracerGeo, enemy ? enemyTracerMat : tracerMat); m.position.copy(from); m.lookAt(to);
+    const m = new THREE.Mesh(tracerGeo, mtl || (enemy ? enemyTracerMat : tracerMat)); m.position.copy(from); m.lookAt(to);
     m.scale.set(1, 1, Math.min(7, len)); scene.add(m);
     tracers.push({ m, from: from.clone(), dir: to.clone().sub(from).normalize(), dist: 0, len, speed: enemy ? 380 : 600 });
   }
@@ -2682,8 +2686,8 @@ const SND = __SOUNDS__;
 
   // ================================================================ Hunted: the open city and the things that hunt you in it
   // A mode of its own. The avenue's barricades come down and its cross streets run on into a grid of city blocks, built the
-  // first time Hunted is picked. Night falls almost at once. Crawlers hunt by sound, the Still moves only while nobody is
-  // looking at it, wailers on the rooftops scream the crawlers onto you, and the figure is still out there behind the goggles.
+  // first time Hunted is picked. Night falls almost at once. Husks (dead soldiers risen as ghosts) hunt by sound and shoot back, the Still moves only while nobody is
+  // looking at it, wailers on the rooftops scream the husks onto you, and the figure is still out there behind the goggles.
   // Find three radios and call for help, then hold out at the evac point until the helicopter comes.
   const CITY = { X: 121, Z: 132, layer: null, perches: [], spots: [], evacs: [] };
   // street grid, east side (the west side mirrors it): north-south avenues at x = 48 and 112, east-west streets at these z
@@ -2952,54 +2956,163 @@ const SND = __SOUNDS__;
   function hitBox(g, h, part, w, ht, d, p) {      // invisible box bullets can hit
     const m = new THREE.Mesh(proxyGeo, M.steel); m.visible = false; m.scale.set(w, ht, d); m.position.set(...p); m.userData.horror = h; m.userData.part = part; m.userData.surface = h.kind === 'still' ? 'concrete' : 'flesh'; g.add(m); h.boxes.push(m); return m;
   }
-  // crawler: a person stretched thin and walking on all fours, elbows and knees jutting up higher than its back, no eyes, a jaw that hangs open
-  function buildCrawler(h) {
-    const g = new THREE.Group(), body = hgrp(g, [0, 0.62, 0]);
-    hmesh(new THREE.CylinderGeometry(0.15, 0.2, 0.9, 8).rotateX(Math.PI / 2), HM.flesh, body, [0, 0, 0]);                  // ribcage, stretched
-    for (let k = 0; k < 7; k++) hmesh(new THREE.ConeGeometry(0.035, 0.09, 4), HM.fleshDk, body, [0, 0.17 - k * 0.004, 0.36 - k * 0.12]);   // spine
-    for (let k = 0; k < 4; k++) for (const s of [-1, 1]) hmesh(new THREE.TorusGeometry(0.15, 0.012, 3, 8, Math.PI * 0.7), HM.fleshDk, body, [s * 0.01, 0, 0.25 - k * 0.11], [0, Math.PI / 2, s > 0 ? -0.3 : Math.PI + 0.3]);  // ribs
-    hmesh(new THREE.SphereGeometry(0.17, 8, 6), HM.flesh, body, [0, 0.02, -0.45], null, [1, 0.8, 1.1]);                    // hips
-    const neck = hgrp(body, [0, 0.05, 0.45], [0.5, 0, 0]);
-    hmesh(new THREE.CylinderGeometry(0.05, 0.07, 0.3, 6).rotateX(Math.PI / 2), HM.flesh, neck, [0, 0, 0.12]);
-    const head = hgrp(neck, [0, 0, 0.3], [-0.7, 0, 0]);
-    hmesh(new THREE.SphereGeometry(0.13, 10, 8), HM.flesh, head, [0, 0.03, 0.04], null, [0.9, 0.85, 1.35]);               // smooth, eyeless skull
-    const jaw = hgrp(head, [0, -0.04, -0.02]);
-    hmesh(new THREE.BoxGeometry(0.15, 0.04, 0.24), HM.flesh, jaw, [0, -0.02, 0.12]);
-    hmesh(new THREE.BoxGeometry(0.13, 0.02, 0.2), HM.gum, jaw, [0, 0.005, 0.12]);
-    for (let k = 0; k < 6; k++) for (const s of [-1, 1]) { hmesh(new THREE.ConeGeometry(0.008, 0.04, 3), HM.teeth, jaw, [s * 0.055, 0.025, 0.04 + k * 0.035]); hmesh(new THREE.ConeGeometry(0.008, 0.04, 3), HM.teeth, head, [s * 0.055, -0.065, 0.06 + k * 0.035], [Math.PI, 0, 0]); }
-    const legs = [];
-    for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {        // shoulder or hip -> elbow up high -> hand far out on the ground
-      const hip = hgrp(body, [sx * 0.16, 0.02, sz * 0.38]);
-      const up = hgrp(hip, [0, 0, 0]);
-      hmesh(new THREE.CylinderGeometry(0.035, 0.05, 0.5, 6).translate(0, 0.25, 0), HM.flesh, up);
-      const knee = hgrp(up, [0, 0.5, 0]);
-      hmesh(new THREE.SphereGeometry(0.05, 6, 4), HM.fleshDk, knee);
-      hmesh(new THREE.CylinderGeometry(0.025, 0.04, 0.62, 6).translate(0, -0.31, 0), HM.flesh, knee);
-      const hand = hgrp(knee, [0, -0.62, 0]);
-      for (let f = 0; f < 3; f++) hmesh(new THREE.ConeGeometry(0.014, 0.16, 4).translate(0, -0.08, 0), HM.fleshDk, hand, [(f - 1) * 0.03, 0, 0], [0.25, 0, (f - 1) * 0.35]);
-      legs.push({ up, knee, sx, sz, ph: (sx * sz > 0 ? 0 : Math.PI) });
+  // husk: a soldier who died out here, risen as a ghost. Same body and carbine as the Survival soldiers, every colour drained out of it.
+  // Its kit is baked into vertex colours so each joint is one mesh. The shader adds the ghost: a cold glow round the outline, slow
+  // bands of light rising through it, and legs that fade out before they reach the ground. It casts no shadow.
+  const HU = { time: { value: 0 }, rim: { value: new THREE.Color(0x7fe8ff) } };
+  function ghostMat(U, o) {
+    const m = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true, roughness: 0.8, flatShading: true, transparent: true, opacity: 0.5,
+      emissive: new THREE.Color(0x041418), side: THREE.DoubleSide }, o));
+    m.onBeforeCompile = s => {
+      Object.assign(s.uniforms, { uTime: HU.time, uRim: HU.rim, uGround: U.ground, uPulse: U.pulse });
+      s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying float vWY;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvWY = (modelMatrix * vec4(transformed, 1.0)).y;');
+      s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vWY; uniform float uTime, uGround, uPulse; uniform vec3 uRim;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          float hh = vWY - uGround;
+          float fres = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 3.0);
+          float band = 0.5 + 0.5 * sin(hh * 9.0 - uTime * 2.2), b2 = pow(band, 6.0);
+          totalEmissiveRadiance += uRim * (fres * 1.5 + b2 * 0.35) * uPulse;
+          diffuseColor.a = min(1.0, diffuseColor.a * (0.7 + 0.3 * band) + fres * 0.35 * step(0.01, diffuseColor.a)) * smoothstep(0.0, 0.6, hh);
+          if (diffuseColor.a < 0.03) discard;`);
+    };
+    return m;
+  }
+  const softDot = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+    const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+  const HK = {
+    void: new THREE.MeshBasicMaterial({ color: 0x010304 }),       // where the face was
+    glow: new THREE.MeshBasicMaterial({ color: 0xc8fbff, toneMapped: false }),
+    mist: new THREE.MeshBasicMaterial({ map: softDot, color: 0x3fa9b8, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+    wisp: new THREE.PointsMaterial({ size: 0.07, map: softDot, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+    flash: new THREE.MeshBasicMaterial({ color: 0x9ff3ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    tracer: new THREE.MeshBasicMaterial({ color: 0x8fefff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })
+  };
+  function seeded(s) { return () => { s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const kitColor = (team, role) => ({ camo: team.rgb, team: team.rgb, team_dk: team.rgb.map(v => v * 0.62), gear: GEARS[team.gear][0], gear_dk: GEARS[team.gear][1], helmet: GEARS[team.gear][2] })[role] || FIXED[role];
+  function ghostColor(team, role) {      // the brightness stays, the colour drains to a drowned grey-green
+    if (role === 'red' || role === 'chem') return new THREE.Color().setRGB(0.25, 0.5, 0.55);
+    const c = kitColor(team, role), l = 0.3 * c[0] + 0.55 * c[1] + 0.15 * c[2];
+    return new THREE.Color().setRGB(lerp(c[0], l, 0.6) * 0.55, lerp(c[1], l, 0.6) * 0.72, lerp(c[2], l, 0.6) * 0.7).multiplyScalar(0.5).convertSRGBToLinear();
+  }
+  const triGeo = (pos, col) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); if (col) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals(); return g; };
+  // a torn strip of uniform hanging from the belt, as triangles
+  function ragTris(pos, col, x, z, a, w, len, rnd, c) {
+    const pts = [];
+    for (let j = 0; j <= 4; j++) { const t = j / 4, hw = w * (1 - t * 0.5) / 2, y = 0.04 - t * len - (j === 4 ? rnd() * len * 0.3 : 0), o = (rnd() - 0.5) * 0.02 * t; pts.push([-hw + o, y], [hw + o, y]); }
+    const P = ([u, y]) => [x + Math.cos(a) * u, y, z - Math.sin(a) * u];
+    for (let j = 0; j < 4; j++) { const [p0, p1, p2, p3] = [pts[j * 2], pts[j * 2 + 1], pts[j * 2 + 2], pts[j * 2 + 3]].map(P);
+      pos.push(...p0, ...p2, ...p1, ...p1, ...p2, ...p3); for (let k = 0; k < 6; k++) col.push(c.r * 0.8, c.g * 0.8, c.b * 0.8); }
+  }
+  // three looks, shared by every husk: different kit, different tears in the cloth
+  // the kit they died in: plain field colours, not the Survival squads' team colours
+  const HUSK_TEAMS = [{ rgb: [0.3, 0.34, 0.22], gear: 'coyote', acc: ['grenades', 'headset', 'backpack', 'knife'] }, { rgb: [0.24, 0.26, 0.22], gear: 'black', acc: ['nvg', 'headset', 'grenades'] },
+    { rgb: [0.38, 0.35, 0.27], gear: 'ranger', acc: ['backpack', 'watch', 'facepaint'] }];
+  const HUSK_LOOKS = HUSK_TEAMS.map((team, v) => {
+    const rnd = seeded(11 + v * 7), body = {}, face = {};
+    for (const g of SOLDIER.groups) {
+      const pos = [], col = [], fp = [];
+      for (const p of g.parts) {
+        if (p.acc && !team.acc.includes(p.acc)) continue;
+        if (/lens/.test(p.role)) continue;                              // no glasses: the eyes show through
+        if (p.role === 'skin') { fp.push(...p.pos); continue; }         // no face either, just a dark hollow
+        const c = ghostColor(team, p.role), cloth = /camo|team/.test(p.role), n = p.pos.length / 9;
+        for (let t = 0; t < n; t++) {
+          if (cloth && rnd() < 0.16) continue;                          // torn open
+          const k = (0.8 + rnd() * 0.3) * (p.shade ? p.shade[t] : 1);
+          for (let i = 0; i < 9; i++) pos.push(p.pos[t * 9 + i]);
+          for (let i = 0; i < 3; i++) col.push(c.r * k, c.g * k, c.b * k);
+        }
+      }
+      if (g.name === 'hips') for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2 + rnd() * 0.4; ragTris(pos, col, Math.sin(a) * 0.23, Math.cos(a) * 0.2, a, 0.08 + rnd() * 0.06, 0.25 + rnd() * 0.25, rnd, ghostColor(team, 'camo')); }
+      body[g.name] = triGeo(pos, col); if (fp.length) face[g.name] = triGeo(fp);
     }
-    hitBox(g, h, 'body', 0.5, 0.5, 1.15, [0, 0.62, 0]); hitBox(g, h, 'head', 0.26, 0.24, 0.34, [0, 0.62, 0.78]);
-    h.parts = { body, neck, head, jaw, legs };
+    return { body, face };
+  });
+  const HUSK_GUN = (() => {      // the carbine he died holding, one mesh
+    const pos = [], nor = [];
+    for (const grp of ['rifle', 'mag', 'optic']) for (const { geo } of WGEO['carbine:' + grp]) { const ge = geo.index ? geo.toNonIndexed() : geo; pos.push(...ge.attributes.position.array); nor.push(...ge.attributes.normal.array); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); return g;
+  })();
+  const hray = new THREE.Raycaster();
+  function huskSurface(geo, x, y) {      // a point on the front of a joint
+    const m = new THREE.Mesh(geo, HK.void); hray.set(new V3(x, y, 2), new V3(0, 0, -1));
+    const h = hray.intersectObject(m, false)[0]; return h ? { p: h.point, n: h.face.normal } : null;
+  }
+  const HUSK_EYES = (() => { const z = (huskSurface(HUSK_LOOKS[0].face.head, 0, 0.15) || { p: new V3(0, 0, 0.115) }).p.z + 0.004;
+    return mergeGeos([-1, 1].map(s => new THREE.SphereGeometry(0.016, 8, 6).translate(s * 0.04, 0.15, z))); })();
+  const HUSK_WOUNDS = (() => {      // the wounds that killed him, still leaking light
+    const out = [];
+    for (const [x, y] of [[0.17, 0.3], [-0.12, 0.2], [0.05, 0.1]]) { const s = huskSurface(HUSK_LOOKS[0].body.upper, x, y); if (!s) continue;
+      const c = new THREE.CircleGeometry(0.016, 7), o = new THREE.Object3D(); o.position.copy(s.p).addScaledVector(s.n, 0.004); o.lookAt(o.position.clone().add(s.n)); o.updateMatrix(); out.push(c.applyMatrix4(o.matrix)); }
+    return mergeGeos(out);
+  })();
+  function mergeGeos(list) {
+    const pos = [], nor = []; for (const g of list) { const ge = g.index ? g.toNonIndexed() : g; pos.push(...ge.attributes.position.array); nor.push(...ge.attributes.normal.array); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); return g;
+  }
+  function buildHusk(h) {
+    h.look = HZ.filter(x => x.kind === 'husk').length % HUSK_LOOKS.length;
+    const g = new THREE.Group(), N = {}, look = HUSK_LOOKS[h.look];
+    h.U = { ground: { value: 0 }, pulse: { value: 1 } };
+    h.mats = [ghostMat(h.U), ghostMat(h.U, { vertexColors: false, color: new THREE.Color(0x1d2a2c), opacity: 0.75, emissive: new THREE.Color(0x06191c), metalness: 0.5, roughness: 0.5 })];
+    for (const m of h.mats) m.userData.op = m.opacity;
+    for (const sg of SOLDIER.groups) {
+      const n = new THREE.Group(); n.position.set(sg.offset[0], sg.offset[1], sg.offset[2]); (sg.parent ? N[sg.parent] : g).add(n); N[sg.name] = n;
+      n.add(new THREE.Mesh(look.body[sg.name], h.mats[0]));
+      if (look.face[sg.name]) n.add(new THREE.Mesh(look.face[sg.name], HK.void));
+    }
+    const gun = new THREE.Mesh(HUSK_GUN, h.mats[1]); gun.position.set(SOLDIER.rifle[0], SOLDIER.rifle[1], SOLDIER.rifle[2]); N.upper.add(gun);
+    h.eyes = new THREE.Mesh(HUSK_EYES, HK.glow); N.head.add(h.eyes);
+    h.wounds = new THREE.Mesh(HUSK_WOUNDS, HK.glow); N.upper.add(h.wounds);
+    h.flash = makeFlash(1.1); h.flash.traverse(o => { if (o.isMesh) o.material = HK.flash; }); h.flash.position.set(SOLDIER.muzzle[0], SOLDIER.muzzle[1], SOLDIER.muzzle[2]); N.upper.add(h.flash);
+    h.mist = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.4).rotateX(-Math.PI / 2), HK.mist); h.mist.position.y = 0.03; g.add(h.mist);
+    // motes of cold light that peel off it and drift up behind, in world space so they trail as it walks
+    const W = 36, wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(W * 3), 3)); wg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(W * 3), 3));
+    h.wisps = new THREE.Points(wg, HK.wisp); h.wisps.frustumCulled = false; h.wisps.visible = false; scene.add(h.wisps);
+    h.wsrc = []; for (const k of ['upper', 'head', 'hips', 'thigh_L', 'thigh_R']) { const a = look.body[k].attributes.position; for (let i = 0; i < a.count; i += 11) h.wsrc.push([k, a.getX(i), a.getY(i), a.getZ(i)]); }
+    h.wlife = new Float32Array(W); h.wvel = new Float32Array(W * 3); h.wN = W;
+    hitBox(N.head, h, 'head', 0.3, 0.32, 0.34, [0, 0.15, 0.01]);
+    hitBox(N.upper, h, 'body', 0.5, 0.5, 0.36, [0, 0.24, 0.02]);
+    hitBox(N.hips, h, 'body', 0.42, 0.24, 0.3, [0, 0, 0]);
+    for (const s of ['L', 'R']) { hitBox(N['thigh_' + s], h, 'leg', 0.17, 0.38, 0.2, [0, -0.17, 0]); hitBox(N['shin_' + s], h, 'leg', 0.15, 0.42, 0.18, [0, -0.2, 0]); }
+    h.parts = {}; h.nodes = N;
     return g;
   }
-  function poseCrawler(h, dt) {
-    const { body, neck, head, jaw, legs } = h.parts, sp = Math.hypot(h.vel.x, h.vel.z);
-    h.gait += dt * (2 + sp * 2.4);
-    const lunge = h.state === 'lunge' ? 1 : 0, wind = h.state === 'wind' ? 1 : 0;
-    body.position.y = 0.62 - wind * 0.18 + Math.abs(Math.sin(h.gait)) * 0.04 * Math.min(1, sp / 3);
-    body.rotation.x = lerp(body.rotation.x, wind * 0.25 - lunge * 0.3, damp(10, dt));
-    body.rotation.z = Math.sin(h.gait) * 0.06 * Math.min(1, sp / 3);
-    neck.rotation.x = 0.5 + Math.sin(h.t * 7.3) * 0.05 + h.twitch * 0.6;
-    head.rotation.y = Math.sin(h.t * 1.3) * 0.3 * (h.state === 'roam' ? 1 : 0.2) + h.twitch * 0.8;
-    head.rotation.z = h.twitch * 0.9;
-    jaw.rotation.x = lerp(jaw.rotation.x, h.state === 'roam' ? 0.25 + Math.sin(h.t * 2) * 0.1 : 0.9, damp(8, dt));
-    h.twitch *= Math.exp(-dt * 6); if (Math.random() < dt * 0.6) h.twitch = rand(-0.4, 0.4);
-    for (const L of legs) {
-      const s = Math.sin(h.gait + L.ph), lift = Math.max(0, s) * Math.min(1, sp / 2);
-      L.up.rotation.set(L.sz * (0.55 + s * 0.35 * Math.min(1, sp / 2)) - lunge * L.sz * 0.6, 0, -L.sx * (0.95 + lift * 0.15));
-      L.knee.rotation.set(0, 0, L.sx * (2.2 - lift * 0.4) + wind * L.sx * 0.3);
+  // a hunched shamble that drags the left leg; it straightens up to shoot. Now and then the head jerks up as if it heard something.
+  function poseHusk(h, dt, aim) {
+    const N = h.nodes, sp = Math.hypot(h.vel.x, h.vel.z), A = clamp(sp / 2.2, 0, 1);
+    h.gait += sp * dt * (Math.PI * 2 / 1.25);
+    h.aimK = lerp(h.aimK || 0, aim ? 1 : 0, damp(6, dt));
+    let drop = 1;
+    for (const [s, off] of [['L', 0], ['R', Math.PI]]) {
+      const p = h.gait + off, lame = s === 'L' ? 0.45 : 1;
+      const th = -0.6 * Math.sin(p) * A * lame, kn = (0.18 + 1.05 * Math.pow(Math.max(0, Math.cos(p)), 1.2)) * A * lame + 0.12;
+      N['thigh_' + s].rotation.x = th; N['shin_' + s].rotation.x = kn; N['foot_' + s].rotation.x = -(th + kn) * 0.85 + (s === 'L' ? 0.35 : 0);
+      drop = Math.min(drop, 0.72 - (0.35 * Math.cos(th) + 0.37 * Math.cos(th + kn)));
     }
+    h.twitch = Math.max(0, h.twitch - dt); if (Math.random() < dt * 0.25) h.twitch = 0.5;
+    const sway = Math.sin(h.t * 0.9), tw = h.twitch > 0 ? Math.sin(h.twitch / 0.5 * Math.PI) : 0, K = 1 - h.aimK;
+    N.hips.position.y = 0.88 - drop + Math.abs(Math.sin(h.gait)) * 0.03 * A; N.hips.rotation.set(0, 0.1 * Math.sin(h.gait) * A, (0.07 + Math.sin(h.gait) * 0.05 * A) * K);
+    N.upper.rotation.set((0.32 + Math.sin(h.gait * 2) * 0.04 * A) * K - h.aimK * 0.04, -N.hips.rotation.y + sway * 0.08 * K, (-0.1 + sway * 0.05) * K);
+    N.head.rotation.set((0.1 - tw * 0.4) * K, (Math.sin(h.t * 0.6) * 0.25 + tw * 0.3) * K, (0.32 + Math.sin(h.t * 0.7) * 0.12 - tw * 0.25) * K);
+    h.eyes.scale.setScalar(0.85 + 0.15 * Math.sin(h.t * 13) * Math.sin(h.t * 3.1));
+  }
+  function huskWisps(h, dt, burst) {
+    const P_ = h.wisps.geometry.attributes.position, C = h.wisps.geometry.attributes.color, first = !h.wStarted; h.wStarted = true;
+    for (let i = 0; i < h.wN; i++) {
+      h.wlife[i] = first ? 0 : h.wlife[i] - dt;
+      if (h.wlife[i] <= 0 && (h.alive || first)) {
+        const s = h.wsrc[(Math.random() * h.wsrc.length) | 0], v = h.nodes[s[0]].localToWorld(tmp.set(s[1], s[2], s[3]));
+        P_.setXYZ(i, v.x, v.y, v.z); h.wlife[i] = first ? Math.random() * 2.8 : 1.6 + Math.random() * 1.2;
+        h.wvel[i * 3] = (Math.random() - 0.5) * 0.1; h.wvel[i * 3 + 1] = 0.18 + Math.random() * 0.2; h.wvel[i * 3 + 2] = (Math.random() - 0.5) * 0.1;
+      }
+      const up = burst ? 1 + burst : 1;
+      P_.setXYZ(i, P_.getX(i) + h.wvel[i * 3] * dt * up, P_.getY(i) + h.wvel[i * 3 + 1] * dt * up, P_.getZ(i) + h.wvel[i * 3 + 2] * dt * up);
+      const k = Math.sin(clamp(h.wlife[i] / 2.8, 0, 1) * Math.PI) * 0.6; C.setXYZ(i, 0.5 * k, 0.9 * k, k);
+    }
+    P_.needsUpdate = C.needsUpdate = true;
   }
   // the Still: a mannequin two and a half metres tall, ball-jointed, faceless. It changes pose every time you look away.
   const STILL_POSES = [
@@ -3102,22 +3215,23 @@ const SND = __SOUNDS__;
     }
   }
   function makeHorror(kind) {
-    const h = { kind, pos: new V3(0, -50, 0), vel: new V3(), yaw: 0, alive: false, active: false, hp: 0, r: kind === 'still' ? 0.3 : 0.45, boxes: [], t: rand(0, 9), gait: 0, twitch: 0, state: 'idle', st: 0, mem: 0, last: new V3(), cd: 0, sense: 0, deadT: 0 };
-    h.g = kind === 'crawler' ? buildCrawler(h) : kind === 'still' ? buildStill(h) : buildWailer(h);
-    mergeParts(h.g, [h.parts.throat].filter(Boolean));
+    const h = { kind, pos: new V3(0, -50, 0), vel: new V3(), yaw: 0, alive: false, active: false, hp: 0, r: kind === 'still' ? 0.3 : kind === 'husk' ? 0.35 : 0.45, boxes: [], t: rand(0, 9), gait: 0, twitch: 0, state: 'idle', st: 0, mem: 0, last: new V3(), cd: 0, sense: 0, deadT: 0 };
+    h.g = kind === 'husk' ? buildHusk(h) : kind === 'still' ? buildStill(h) : buildWailer(h);
+    if (kind !== 'husk') mergeParts(h.g, [h.parts.throat].filter(Boolean));      // husks are already one mesh per joint
     h.g.visible = false; scene.add(h.g); HZ.push(h);
     return h;
   }
-  for (let i = 0; i < 12; i++) makeHorror('crawler');
+  for (let i = 0; i < 18; i++) makeHorror('husk');
   for (let i = 0; i < 3; i++) makeHorror('wailer');
   makeHorror('still');
   function horrorOn(h, at, o = {}) {
     h.active = h.alive = true; h.pos.copy(at); h.vel.set(0, 0, 0); h.g.visible = true; h.g.position.copy(at);
-    h.hp = h.kind === 'crawler' ? 70 : h.kind === 'wailer' ? 90 : 1e9; h.state = o.state || 'roam'; h.st = 0; h.mem = 0; h.cd = 0; h.deadT = 0; h.g.rotation.set(0, o.yaw !== undefined ? o.yaw : rand(0, 6.3), 0); h.yaw = h.g.rotation.y;
+    h.hp = h.kind === 'husk' ? 80 : h.kind === 'wailer' ? 90 : 1e9; h.state = o.state || 'roam'; h.st = 0; h.mem = 0; h.cd = 0; h.deadT = 0; h.g.rotation.set(0, o.yaw !== undefined ? o.yaw : rand(0, 6.3), 0); h.yaw = h.g.rotation.y;
     for (const b of h.boxes) if (!shootables.includes(b)) shootables.push(b);
+    if (h.kind === 'husk') huskOn(h);
   }
   function horrorOff(h) {
-    h.active = h.alive = false; h.g.visible = false; h.pos.set(0, -50, 0); h.g.position.copy(h.pos);
+    h.active = h.alive = false; h.g.visible = false; h.pos.set(0, -50, 0); h.g.position.copy(h.pos); if (h.wisps) h.wisps.visible = false;
     for (const b of h.boxes) { const i = shootables.indexOf(b); if (i >= 0) shootables.splice(i, 1); }
   }
   const unseenSpot = (r0, r1) => {      // somewhere out of sight to bring something in
@@ -3128,25 +3242,28 @@ const SND = __SOUNDS__;
     }
     return navRandomNear(P.pos, r0, r1);
   };
-  // noise: gunshots, sprinting, radios. Crawlers in earshot come to look.
+  // noise: gunshots, sprinting, radios. Husks in earshot come to look.
   function huntNoise(at, radius) {
-    for (const h of HZ) if (h.alive && h.kind === 'crawler' && h.pos.distanceTo(at) < radius) { h.last.copy(at); h.mem = Math.max(h.mem, 5); if (h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.5) sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.4, rand(0.92, 1.08)); } }
+    for (const h of HZ) if (h.alive && h.kind === 'husk' && h.state !== 'rise' && h.pos.distanceTo(at) < radius) { h.last.copy(at); h.mem = Math.max(h.mem, 5); if (h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.4) sfxAt('husk_alert' + randi(0, 1), headOf(h), 1.4, rand(0.9, 1.05), { wet: 0.8 }); } }
   }
   const _hh = new V3();
-  function headOf(h) { return _hh.set(h.pos.x, h.pos.y + (h.kind === 'still' ? 2.2 : h.kind === 'wailer' ? 2.2 : 0.7), h.pos.z); }
+  function headOf(h) { return _hh.set(h.pos.x, h.pos.y + (h.kind === 'still' ? 2.2 : h.kind === 'wailer' ? 2.2 : 1.5), h.pos.z); }
   function damageHorror(h, part, point, mult, countHit = true) {
     if (!h.alive) return false;
     if (h.kind === 'still') return false;          // bullets just chip it
-    const dmg = W().dmg[part === 'head' ? 'head' : 'body'] * mult;
-    h.hp -= dmg; h.twitch = rand(-1, 1); if (countHit) stats.hits++;
-    sfxAt('flesh' + randi(0, 3), point, 1.3, rand(0.85, 1.0)); puff(point, 0x3a1a18, 5, 0.06, 0.6, 0.4);
-    if (h.kind === 'crawler') { h.mem = Math.max(h.mem, 6); h.last.copy(P.pos); if (h.state === 'roam') h.state = 'hunt'; h.st = Math.min(h.st, 0); h.vel.multiplyScalar(0.3); }
-    if (h.kind === 'wailer' && h.state === 'inhale') { h.state = 'idle'; h.cd = 6; sfxAt('crawl_lunge', headOf(h), 1.2, 0.6); }
+    const dmg = W().dmg[part === 'head' ? 'head' : part === 'leg' ? 'leg' : 'body'] * mult;
+    h.hp -= dmg; if (countHit) stats.hits++;
+    if (h.kind === 'husk') {      // a cold flare of light instead of blood; it turns on you
+      sfxAt('flesh' + randi(0, 3), point, 1.1, rand(0.6, 0.7)); puff(point, 0x9fe8f0, 5, 0.06, 0.6, 0.5, 0.4); h.flashK = 1;
+      h.mem = Math.max(h.mem, 6); h.last.copy(P.pos); if (h.state === 'roam') h.state = 'hunt'; h.vel.multiplyScalar(0.3);
+    } else { h.twitch = rand(-1, 1); sfxAt('flesh' + randi(0, 3), point, 1.3, rand(0.85, 1.0)); puff(point, 0x3a1a18, 5, 0.06, 0.6, 0.4); }
+    if (h.kind === 'wailer' && h.state === 'inhale') { h.state = 'idle'; h.cd = 6; sfxAt('husk_alert0', headOf(h), 1.2, 1.4); }
     if (h.hp <= 0) {
       h.alive = false; h.state = 'dead'; h.deadT = 0; stats.kills++; HUNT.kills++; if (part === 'head') stats.heads++;
       for (const b of h.boxes) { const i = shootables.indexOf(b); if (i >= 0) shootables.splice(i, 1); }
-      sfxAt(h.kind === 'wailer' ? 'crawl_screech1' : 'crawl_die', headOf(h), 1.6, h.kind === 'wailer' ? 0.6 : rand(0.9, 1.05));
-      feed(h.kind === 'wailer' ? '<b style="color:#d96a4a">Wailer</b> down' : `<b style="color:#c9b3a8">Crawler</b> down${part === 'head' ? ' · headshot' : ''}`);
+      sfxAt(h.kind === 'wailer' ? 'wail_in' : 'husk_die', headOf(h), 1.6, h.kind === 'wailer' ? 0.6 : rand(0.9, 1.05), { wet: 0.8 });
+      feed(h.kind === 'wailer' ? '<b style="color:#d96a4a">Wailer</b> down' : `<b style="color:#9fe0e8">Husk</b> down${part === 'head' ? ' · headshot' : ''}`);
+      if (h.kind === 'husk') dropAmmo(h.pos);
       hitMarker(true);
       if (h.kind === 'wailer') { h.respawn = 70; wailLight.intensity = 0; }
     } else hitMarker(false);
@@ -3178,63 +3295,172 @@ const SND = __SOUNDS__;
     if ((d < 14 && Math.abs(P.pos.y - h.pos.y) < 1.5 && h.losT > 0) || !navDir(h.pos, out)) out.copy(_hv).divideScalar(d);
     return d;
   }
-  function updateCrawler(h, dt) {
-    if (!h.alive) {       // dead: flipped over, legs curling, then gone
-      h.deadT += dt; h.g.rotation.z = lerp(h.g.rotation.z, Math.PI * 0.95, damp(6, dt)); h.g.position.y = h.pos.y + Math.min(0.5, h.deadT) * 0.9;
-      for (const L of h.parts.legs) { L.knee.rotation.z = lerp(L.knee.rotation.z, L.sx * 2.8, damp(3, dt)); }
-      if (h.deadT > 8) horrorOff(h);
+  // husks: dead soldiers that get up out of the bodies in the street. Slow, half blind, but they still carry their rifles.
+  function huskOn(h) {
+    h.g.rotation.order = 'YXZ'; h.g.rotation.x = 0; h.U.pulse.value = 1; h.flashK = 0; h.aimK = 0; h.twitch = 0; h.hitCD = 0; h.burst = 0; h.shotT = 0; h.losT = 0;
+    for (const m of h.mats) m.opacity = m.userData.op;
+    h.eyes.visible = h.mist.visible = true; h.flash.visible = false; h.wisps.visible = true; h.wStarted = false;
+  }
+  function huskFire(h) {
+    const D = DIFF[difficulty], from = h.nodes.upper.localToWorld(tmp2.set(SOLDIER.muzzle[0], SOLDIER.muzzle[1], SOLDIER.muzzle[2])).clone();
+    const dist = from.distanceTo(P.pos), pSpeed = Math.hypot(P.vel.x, P.vel.z);
+    const sigma = (0.065 + dist * 0.0015) * (1 + pSpeed * 0.3) * (P.crouch > 0.5 ? 0.85 : 1) * D.acc * (torchOn ? 1 : lerp(1, 1.4, TOD.dark));
+    const r = shotAtPlayer(from, sigma);
+    if (r.hit) damagePlayer(randi(5, 8) * D.dmg, h, 'husk');
+    h.flash.visible = true; h.flash.rotation.z = rand(0, 6); h.flashT = 0.05;
+    sfxAt(dist > 32 ? 'far_c' : 'shot_c' + randi(0, 2), from, 1.7, rand(0.72, 0.8), { ref: 12, roll: 0.9, wet: 0.9 });      // their guns sound hollow
+    tracer(from, r.end, true, HK.tracer);
+  }
+  function updateHusk(h, dt) {
+    h.t += dt; h.flashT = (h.flashT || 0) - dt; if (h.flashT <= 0) h.flash.visible = false;
+    h.flashK = Math.max(0, (h.flashK || 0) - dt * 4); h.U.pulse.value = 1 + h.flashK * 2.5; h.U.ground.value = h.pos.y;
+    const dd = h.pos.distanceTo(P.pos), near = dd < 70, close = dd < 40;
+    h.wisps.visible = close; h.wounds.visible = close; h.mist.visible = close && h.alive;      // the small stuff only up close
+    if (!h.alive) {       // shot: the light goes out of it and it blows away
+      h.deadT += dt; const k = Math.min(1, h.deadT / 1.4);
+      for (const m of h.mats) m.opacity = m.userData.op * (1 - k);
+      h.eyes.visible = false; h.mist.visible = close && k < 0.5; h.g.position.y = h.pos.y + k * 0.4; h.nodes.upper.rotation.x = lerp(h.nodes.upper.rotation.x, 0.9, damp(3, dt));
+      if (close) huskWisps(h, dt, 2.5);
+      if (h.deadT > 2.4) horrorOff(h);
       return;
     }
-    h.t += dt; h.cd -= dt; h.mem -= dt; h.sense -= dt; h.losT = (h.losT || 0) - dt;
+    if (close) huskWisps(h, dt, 0);
+    h.cd -= dt; h.mem -= dt; h.sense -= dt; h.losT -= dt; h.hitCD -= dt;
     const dx = P.pos.x - h.pos.x, dz = P.pos.z - h.pos.z, d = Math.hypot(dx, dz), dy = P.pos.y - h.pos.y;
-    // senses, a few times a second: they hear far better than they see
-    if (h.sense <= 0) {
-      h.sense = rand(0.18, 0.28);
-      const sightR = (lerp(40, 18, TOD.dark) + (torchOn ? 16 : 0)) * (P.crouch > 0.5 ? 0.6 : 1);
-      const sees = P.alive && d < sightR && clearLine(headOf(h), playerChest());
-      if (sees) { h.losT = 0.6; h.last.copy(P.pos); h.mem = 6; }
-      if (P.alive && d < HUNT.loud) { h.last.copy(P.pos); h.mem = Math.max(h.mem, 3); }
-      if (h.mem > 0 && h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.7) sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.5, rand(0.9, 1.1)); }
-      if (h.state === 'roam' && Math.random() < 0.06) sfxAt('crawl_hiss' + randi(0, 1), headOf(h), 0.9, rand(0.9, 1.1));
+    if (h.state === 'rise') {       // up out of the body, stiff as a plank, pivoting on its heels
+      h.st += dt; const k = clamp(h.st / 2, 0, 1), e = k * k * (3 - 2 * k);
+      h.g.rotation.x = (1 - e) * Math.PI / 2; h.g.position.set(h.pos.x, h.pos.y + (1 - e) * 0.27, h.pos.z); h.g.rotation.y = h.yaw;
+      for (const m of h.mats) m.opacity = m.userData.op * clamp(h.st / 1.2, 0, 1);
+      poseHusk(h, dt, false);
+      if (h.st > 2.1) { h.g.rotation.x = 0; h.state = h.mem > 0 ? 'hunt' : 'roam'; if (h.mem > 0) sfxAt('husk_alert' + randi(0, 1), headOf(h), 1.4, rand(0.9, 1.05), { wet: 0.8 }); }
+      return;
     }
-    if (h.state === 'climb') {      // up the wall after you
-      h.pos.y += 3.6 * dt; h.g.rotation.x = lerp(h.g.rotation.x, -1.3, damp(10, dt)); h.vel.set(0, 0, 0);
-      if (Math.random() < dt * 8) sfxAt('crawl_step' + randi(0, 3), h.pos, 1.0, rand(1.0, 1.2));
-      if (h.pos.y >= P.pos.y - 0.05) { h.pos.y = P.pos.y; h.g.rotation.x = 0; h.state = 'hunt'; h.pos.x += Math.sign(dx) * Math.min(1.2, Math.abs(dx)); h.pos.z += Math.sign(dz) * Math.min(1.2, Math.abs(dz)); bounds(h.pos); }
-      else if (!P.alive || dy < 1) { h.state = 'hunt'; h.g.rotation.x = 0; }
-    } else if (h.state === 'wind') {        // crouches, screams, then springs
-      h.st += dt; h.vel.multiplyScalar(Math.exp(-dt * 10)); h.yaw = lerpAngle(h.yaw, Math.atan2(dx, dz), damp(14, dt));
-      if (h.st > 0.32) { h.state = 'lunge'; h.st = 0; h.vel.set(Math.sin(h.yaw) * 10, 0, Math.cos(h.yaw) * 10); h.hitDone = false; }
-    } else if (h.state === 'lunge') {
-      h.st += dt; h.pos.addScaledVector(h.vel, dt); collide(h.pos, h.vel, h.r, h.pos.y, 1.2); h.vel.multiplyScalar(Math.exp(-dt * 3));
-      if (!h.hitDone && P.alive && Math.hypot(P.pos.x - h.pos.x, P.pos.z - h.pos.z) < 1.25 && Math.abs(dy) < 1.4) {
-        h.hitDone = true; damagePlayer(Math.round(22 * DIFF[difficulty].dmg), h, 'crawler'); sfxAt('flesh' + randi(0, 3), playerChest(), 1.2, 0.8, { occlude: false, ref: 1 });
-        Wp.punchP += 0.05; Wp.punchY += rand(-0.08, 0.08);
-      }
-      if (h.st > 0.35) { h.state = 'hunt'; h.cd = rand(0.9, 1.4); }
+    // senses, a few times a second: they hear well and see badly, worse in the dark unless your torch is on
+    if (h.sense <= 0) {
+      h.sense = rand(0.2, 0.32);
+      const sightR = (lerp(45, 22, TOD.dark) + (torchOn ? 18 : 0)) * (P.crouch > 0.5 ? 0.65 : 1);
+      if (P.alive && d < sightR && clearLine(headOf(h), playerChest())) { h.losT = 0.5; h.last.copy(P.pos); h.mem = 6; }
+      if (P.alive && d < HUNT.loud) { h.last.copy(P.pos); h.mem = Math.max(h.mem, 3); }
+      if (h.mem > 0 && h.state === 'roam') { h.state = 'hunt'; if (Math.random() < 0.6) sfxAt('husk_alert' + randi(0, 1), headOf(h), 1.4, rand(0.9, 1.05), { wet: 0.8 }); }
+      if (Math.random() < (h.state === 'roam' ? 0.035 : 0.02) && d < 50) sfxAt('husk_moan' + randi(0, 2), headOf(h), 1.1, rand(0.85, 1.05), { ref: 4, wet: 0.9 });
+    }
+    let aiming = false;
+    if (h.state === 'aim') {        // stops, straightens up, then fires a few slow shots
+      aiming = true; h.st += dt; h.yaw = lerpAngle(h.yaw, Math.atan2(dx, dz), damp(6, dt)); moveHorror(h, _hd.set(0, 0, 0), 0, dt);
+      h.shotT -= dt;
+      if (h.st > h.aimT && h.shotT <= 0 && h.burst > 0 && P.alive) { huskFire(h); h.burst--; h.shotT = rand(0.18, 0.32); }
+      if (h.burst <= 0 || !P.alive || (h.losT <= 0 && h.st > h.aimT)) { h.state = 'hunt'; h.cd = rand(2.5, 4.5); }
     } else {
-      // roam: wander the streets; hunt: chase down whatever it last heard or saw
-      let speed = 1.5;
+      // roam: wander the streets; hunt: shamble after whatever it last heard or saw
+      let speed = 0.8;
       if (h.state === 'hunt') {
-        if (h.mem > 0) { chaseDir(h, _hd); speed = 6.2 * (TOD.dark > 0.45 ? 1 : 0.85); }
-        else { _hd.set(h.last.x - h.pos.x, 0, h.last.z - h.pos.z); const l = _hd.length(); if (l < 2 || h.mem < -12) { h.state = 'roam'; h.goal = null; } else _hd.divideScalar(l); speed = 3.5; }
-        if (h.mem > 0 && P.alive && d < 2.6 && Math.abs(dy) < 1.2 && h.cd <= 0) { h.state = 'wind'; h.st = 0; sfxAt('crawl_lunge', headOf(h), 1.6, rand(0.9, 1.1)); }
-        else if (h.mem > 0 && P.alive && dy > 2 && d < 3.5) { h.state = 'climb'; sfxAt('crawl_screech' + randi(0, 2), headOf(h), 1.4, 0.85); }
+        if (h.mem > 0) { chaseDir(h, _hd); speed = d < 1.1 && Math.abs(dy) < 1.2 ? 0 : TOD.dark > 0.45 ? 1.9 : 1.6; }      // right up against you, not inside you
+        else { _hd.set(h.last.x - h.pos.x, 0, h.last.z - h.pos.z); const l = _hd.length(); if (l < 2 || h.mem < -15) { h.state = 'roam'; h.goal = null; } else _hd.divideScalar(l); speed = 1.3; }
+        if (h.losT > 0 && h.cd <= 0 && d < 55 && d > 2.5 && P.alive) { h.state = 'aim'; h.st = 0; h.aimT = rand(0.5, 0.9); h.burst = randi(2, 3); h.shotT = 0; }
       } else {
         if (!h.goal || h.pos.distanceTo(h.goal) < 2 || Math.random() < dt * 0.05) h.goal = navRandomNear(h.pos, 8, 30);
-        if (h.goal) { _hd.set(h.goal.x - h.pos.x, 0, h.goal.z - h.pos.z).normalize(); } else _hd.set(0, 0, 0);
-        if (Math.random() < dt * 0.3) speed = 0;      // stops, listens
+        if (h.goal) _hd.set(h.goal.x - h.pos.x, 0, h.goal.z - h.pos.z).normalize(); else _hd.set(0, 0, 0);
+        if (Math.random() < dt * 0.3) speed = 0;      // stands swaying
       }
-      // a crawler that drops off a roof lands on the street
-      if (h.pos.y > 0.2 && (dy < -1 || !P.alive)) { const s = support(h.pos, 0.3); if (h.pos.y > s + 0.2) { h.pos.y = Math.max(s, h.pos.y - 9 * dt); } }
-      moveHorror(h, _hd, speed, dt);
-      if (h.pos.y < 2) h.pos.y = Math.max(support(h.pos, 0.3), 0);
-      // footsteps: a fast patter of taps
+      moveHorror(h, _hd, speed, dt, 4);
+      h.pos.y = Math.max(support(h.pos, 0.3), 0);
+      // a slow heavy step, and the dragged boot
       h.stepT = (h.stepT || 0) - dt * Math.hypot(h.vel.x, h.vel.z);
-      if (h.stepT <= 0 && Math.hypot(h.vel.x, h.vel.z) > 0.5) { h.stepT = 0.55; if (d < 40) sfxAt('crawl_step' + randi(0, 3), h.pos, 1.1, rand(0.9, 1.2), { ref: 2.5, wet: 0.4 }); }
+      if (h.stepT <= 0 && Math.hypot(h.vel.x, h.vel.z) > 0.4) { h.stepT = 0.62; h.stepN = (h.stepN || 0) + 1; if (d < 35) sfxAt(h.stepN % 2 ? 'husk_drag' + randi(0, 1) : 'st_con' + randi(0, 5), h.pos, 0.9, rand(0.8, 0.9), { ref: 2.5, wet: 0.5 }); }
+    }
+    // up close it clubs you with the rifle
+    if (P.alive && d < 1.5 && Math.abs(dy) < 1.2 && h.hitCD <= 0) {
+      h.hitCD = 1.6; damagePlayer(Math.round(14 * DIFF[difficulty].dmg), h, 'husk'); sfxAt('flesh' + randi(0, 3), playerChest(), 1.1, 0.8, { occlude: false, ref: 1 });
+      Wp.punchP += 0.05; Wp.punchY += rand(-0.08, 0.08);
     }
     h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
-    poseCrawler(h, dt);
+    if (near) poseHusk(h, dt, aiming);
+  }
+  // the dead: soldiers lying face down in the streets. Husks get up out of them.
+  const CORPSE_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, flatShading: true });
+  const CORPSE_GEO = HUSK_TEAMS.map((team, v) => {
+    const root = new THREE.Group(), N = {}, rnd = seeded(40 + v);
+    for (const sg of SOLDIER.groups) { const n = new THREE.Group(); n.position.set(sg.offset[0], sg.offset[1], sg.offset[2]); (sg.parent ? N[sg.parent] : root).add(n); N[sg.name] = n; }
+    // face down, head turned to the side, legs apart, one knee bent: the same body the husk rises out of, lying the same way
+    root.rotation.x = Math.PI / 2; root.position.y = 0.27;
+    N.head.rotation.y = v % 2 ? 0.9 : -0.9; N.upper.rotation.z = rnd() * 0.2 - 0.1;
+    N.thigh_L.rotation.z = 0.18; N.thigh_R.rotation.z = -0.12; N['shin_' + (v % 2 ? 'L' : 'R')].rotation.x = 0.5; N.foot_L.rotation.x = N.foot_R.rotation.x = 0.7;
+    root.updateMatrixWorld(true);
+    const pos = [], col = [], dust = [0.36, 0.33, 0.29], vv = new V3();
+    for (const sg of SOLDIER.groups) for (const p of sg.parts) {
+      if (p.acc && !team.acc.includes(p.acc)) continue;
+      const c = p.role === 'skin' ? [0.42, 0.4, 0.38] : kitColor(team, p.role), n = p.pos.length / 9;
+      for (let t = 0; t < n; t++) {
+        const k = 0.7 * (p.shade ? p.shade[t] : 1);
+        for (let i = 0; i < 3; i++) { vv.set(p.pos[t * 9 + i * 3], p.pos[t * 9 + i * 3 + 1], p.pos[t * 9 + i * 3 + 2]).applyMatrix4(N[sg.name].matrixWorld); pos.push(vv.x, vv.y, vv.z); }
+        for (let i = 0; i < 3; i++) col.push(...[0, 1, 2].map(j => Math.pow(lerp(c[j], dust[j], 0.25) * k, 2.2)));
+      }
+    }
+    return triGeo(pos, col);
+  });
+  const CORPSE_IM = CORPSE_GEO.map(g => { const m = new THREE.InstancedMesh(g, CORPSE_MAT, 30); m.castShadow = m.receiveShadow = true; m.count = 0; m.visible = false; m.frustumCulled = false; scene.add(m); return m; });
+  const stainTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), r = seeded(5);
+    for (let i = 0; i < 14; i++) { const x = 64 + (r() - 0.5) * 50, y = 64 + (r() - 0.5) * 70, s = 12 + r() * 26, gr = g.createRadialGradient(x, y, 0, x, y, s);
+      gr.addColorStop(0, 'rgba(255,255,255,0.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); }
+    return new THREE.CanvasTexture(c); })();
+  const STAIN = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.6, 2.4).rotateX(-Math.PI / 2).translate(0, 0.02, 0.95),
+    new THREE.MeshStandardMaterial({ color: 0x1c0a08, roughness: 0.4, alphaMap: stainTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), 90);
+  STAIN.receiveShadow = true; STAIN.count = 0; STAIN.visible = false; STAIN.frustumCulled = false; scene.add(STAIN);
+  const CORPSES = [];
+  function placeCorpses() {
+    CORPSES.length = 0; const counts = CORPSE_IM.map(() => 0), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new V3(1, 1, 1), up = new V3(0, 1, 0);
+    for (let k = 0; k < 600 && CORPSES.length < 70; k++) {
+      const p = navRandomNear(new V3(0, 0, 0), 0, 190); if (!p) continue;
+      if (p.distanceTo(P.pos) < 18 || CORPSES.some(c => c.p.distanceTo(p) < 6)) continue;
+      const yaw = rand(0, Math.PI * 2); if (!navFreeAt(p.x + Math.sin(yaw) * 1.7, p.z + Math.cos(yaw) * 1.7)) continue;      // all of him on open ground
+      const look = randi(0, CORPSE_IM.length - 1); if (counts[look] >= 30) continue;
+      p.y = support(new V3(p.x, 0.6, p.z), 0.3);
+      m4.compose(p, q.setFromAxisAngle(up, yaw), one); CORPSE_IM[look].setMatrixAt(counts[look]++, m4); STAIN.setMatrixAt(CORPSES.length, m4);
+      CORPSES.push({ p, yaw, look, near: false, cool: 0 });
+    }
+    CORPSE_IM.forEach((m, i) => { m.count = counts[i]; m.instanceMatrix.needsUpdate = true; }); STAIN.count = CORPSES.length; STAIN.instanceMatrix.needsUpdate = true;
+  }
+  function huskRise(c, alert) {
+    const free = HZ.filter(h => h.kind === 'husk' && !h.active); if (!free.length) return null;
+    const h = free.find(x => x.look === c.look) || free[0];
+    horrorOn(h, c.p, { state: 'rise', yaw: c.yaw }); c.cool = 120;
+    if (alert) { h.mem = 6; h.last.copy(P.pos); }
+    sfxAt('husk_rise', tmp.set(c.p.x, c.p.y + 0.5, c.p.z), 1.5, rand(0.92, 1.05), { ref: 5, wet: 1 });
+    return h;
+  }
+  function pickCorpse(r0, r1) {
+    const ok = CORPSES.filter(c => c.cool <= 0 && !c.near && c.p.distanceTo(P.pos) > r0 && c.p.distanceTo(P.pos) < r1);
+    return ok.length ? pick(ok) : null;
+  }
+  // ---------------------------------------------------------------- ammo the husks drop
+  const AMMO_M = { can: mat(0x4a5233, 0.6, 0.4), lid: mat(0x2b2f22, 0.5, 0.6),
+    glow: new THREE.MeshBasicMaterial({ map: softDot, color: 0x9ff3ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }) };
+  const DROPS = [];
+  for (let i = 0; i < 12; i++) {
+    const g = new THREE.Group();
+    const can = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.17, 0.13), AMMO_M.can); can.position.y = 0.085; can.castShadow = true; g.add(can);
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.03, 0.14), AMMO_M.lid); lid.position.y = 0.18; g.add(lid);
+    const hd = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.015, 0.02), AMMO_M.lid); hd.position.y = 0.205; g.add(hd);
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), AMMO_M.glow); glow.position.y = 0.03; g.add(glow);      // a little cold light where it fell
+    g.visible = false; scene.add(g); DROPS.push({ g, glow, on: false, t: 0 });
+  }
+  function dropAmmo(p) {
+    const a = DROPS.find(x => !x.on) || DROPS.reduce((o, x) => x.t < o.t ? x : o);
+    a.on = true; a.t = 120; a.g.position.set(p.x + rand(-0.3, 0.3), Math.max(support(p, 0.3), p.y), p.z + rand(-0.3, 0.3)); a.g.rotation.y = rand(0, 6.3); a.g.visible = true;
+  }
+  function updateDrops(dt) {
+    for (const a of DROPS) {
+      if (!a.on) continue;
+      a.t -= dt; a.glow.material.opacity = 0.4 + Math.sin(simTime * 3) * 0.1;
+      if (a.t <= 0) { a.on = false; a.g.visible = false; continue; }
+      if (!P.alive || Math.hypot(P.pos.x - a.g.position.x, P.pos.z - a.g.position.z) > 1.3 || Math.abs(P.pos.y - a.g.position.y) > 1.6) continue;
+      const Wd = W(), full = Wp.reserve >= Wd.reserveMax && Object.entries(Wp.store).every(([k, st]) => st.reserve >= WEAPONS[k].reserveMax);
+      if (full) { if (promptT <= 0) showPrompt('Ammo full', 0.3); continue; }
+      const got = Math.min(Wd.magSize, Wd.reserveMax - Wp.reserve); Wp.reserve += got;
+      for (const [k, st] of Object.entries(Wp.store)) st.reserve = Math.min(WEAPONS[k].reserveMax, st.reserve + Math.ceil(WEAPONS[k].magSize * 0.6));
+      updateAmmo(); sfx('c_magin', 0.8, 1.1); showPrompt(got ? `+${got} ${Wd.cal}` : 'Ammo for your other gun', 1.2);
+      a.on = false; a.g.visible = false;
+    }
   }
   // the Still moves only while you're not looking. Look back and it's closer, and in a new pose.
   function updateStill(h, dt) {
@@ -3263,7 +3489,7 @@ const SND = __SOUNDS__;
     h.losT = 1;       // it always knows where you are
     h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
   }
-  // wailers watch the streets from the rooftops. If one sees you it draws breath, then screams every crawler onto you.
+  // wailers watch the streets from the rooftops. If one sees you it draws breath, then screams every husk onto you.
   function updateWailer(h, dt) {
     if (!h.alive) {
       if (h.state === 'dead') {        // falls off the roof
@@ -3296,10 +3522,10 @@ const SND = __SOUNDS__;
       if (h.state === 'inhale' && h.st > 1.3) {
         h.state = 'wail'; h.st = 0; sfxAt('wail', head, 3.2, rand(0.95, 1.05), { ref: 30, roll: 0.8, max: 500, wet: 1.2 });
         toast('Something is screaming<small>Everything nearby knows where you are</small>', 2.2);
-        for (const c of HZ) if (c.alive && c.kind === 'crawler' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = 9; c.state = c.state === 'roam' ? 'hunt' : c.state; }
+        for (const c of HZ) if (c.alive && c.kind === 'husk' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = 9; c.state = c.state === 'roam' ? 'hunt' : c.state; }
         HUNT.extra = Math.max(HUNT.extra, 2); HUNT.spawnT = Math.min(HUNT.spawnT, 1);
       }
-      if (h.state === 'wail') { if (h.st > 0.5 && Math.random() < dt * 4) for (const c of HZ) if (c.alive && c.kind === 'crawler' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = Math.max(c.mem, 6); } if (h.st > 3.8) { h.state = 'idle'; h.cd = 15; wailLight.intensity = 0; } }
+      if (h.state === 'wail') { if (h.st > 0.5 && Math.random() < dt * 4) for (const c of HZ) if (c.alive && c.kind === 'husk' && c.pos.distanceTo(P.pos) < 150) { c.last.copy(P.pos); c.mem = Math.max(c.mem, 6); } if (h.st > 3.8) { h.state = 'idle'; h.cd = 15; wailLight.intensity = 0; } }
     }
     h.g.position.copy(h.pos); h.g.rotation.y = h.yaw;
   }
@@ -3358,6 +3584,7 @@ const SND = __SOUNDS__;
     setLayer(AVE, !on); if (CITY.layer) setLayer(CITY.layer, on);
     for (const h of HZ) horrorOff(h);
     for (const r of RADIOS) r.g.visible = false; EVAC.g.visible = false; EVAC.on = false; wailLight.intensity = 0;
+    for (const m of CORPSE_IM) m.visible = on; STAIN.visible = on; for (const a of DROPS) { a.on = false; a.g.visible = false; }
     if (on) navBuild();
   }
   function huntReset() {
@@ -3372,6 +3599,7 @@ const SND = __SOUNDS__;
     chosen.forEach((s, i) => { const r = RADIOS[i]; r.p.copy(s.p); r.p.y = support(new V3(s.p.x, 2, s.p.z), 0.3); r.g.position.copy(r.p); r.g.rotation.y = rand(0, 6); r.g.visible = true; r.done = false; r.prog = 0; r.name = s.name; r.led.material = RADIO_M.led; r.glow.material.color.setHex(0xff3020); });
     // wailers on three rooftops, the Still far off until night
     for (const h of HZ.filter(h => h.kind === 'wailer')) { const pr = freePerch(true); if (pr) { horrorOn(h, pr.p, { state: 'idle', yaw: pr.yaw }); h.perch = pr; h.cd = 4; } }
+    placeCorpses();
     HUNT.navT = 0; navFlow();
   }
   function huntNightCount() { const n = TOD.dark > 0.45; if (n && !HUNT.wasNight) HUNT.nights++; HUNT.wasNight = n; return n; }
@@ -3384,24 +3612,32 @@ const SND = __SOUNDS__;
     HUNT.txT -= dt;
     // the flow field, refreshed a few times a second
     HUNT.navT -= dt; if (HUNT.navT <= 0) { HUNT.navT = 0.35; navFlow(); }
-    // crawlers: a couple by day, a pack by night, more each night, and more when something has screamed
-    const alive = HZ.filter(h => h.kind === 'crawler' && h.alive).length;
-    const want = (night ? 5 + Math.min(4, HUNT.nights - 1) : 2) + HUNT.extra + (EVAC.on && EVAC.hold > 0 ? 4 : 0);
+    HU.time.value += dt;
+    // husks get up out of the dead in the streets: a few by day, crowds by night, more each night, and more when something has screamed
+    const alive = HZ.filter(h => h.kind === 'husk' && h.alive).length;
+    const want = (night ? 9 + Math.min(6, (HUNT.nights - 1) * 2) : 4) + HUNT.extra * 2 + (EVAC.on && EVAC.hold > 0 ? 6 : 0);
     HUNT.spawnT -= dt;
     if (HUNT.spawnT <= 0 && P.alive && !gameOver) {
-      HUNT.spawnT = night ? rand(4, 8) : rand(10, 16);
-      if (alive < Math.min(12, want)) { const h = HZ.find(h => h.kind === 'crawler' && !h.active); const p = unseenSpot(45, 85); if (h && p) { horrorOn(h, p); if (EVAC.hold > 0) { h.mem = 8; h.last.copy(P.pos); h.state = 'hunt'; } } }
+      HUNT.spawnT = night ? rand(2, 4.5) : rand(6, 10);
+      if (alive < want) { const c = pickCorpse(20, 75); if (c) huskRise(c, EVAC.hold > 0); }
       if (HUNT.extra > 0) HUNT.extra = Math.max(0, HUNT.extra - 0.5);
     }
+    // walk past a body and it may get up behind you
+    for (const c of CORPSES) {
+      c.cool -= dt; const cd = Math.hypot(c.p.x - P.pos.x, c.p.z - P.pos.z);
+      if (cd > 14) c.near = false;
+      else if (cd < 7 && !c.near && P.alive) { c.near = true; if (c.cool <= 0 && alive < want + 3 && Math.random() < (night ? 0.45 : 0.2)) huskRise(c, true); }
+    }
+    updateDrops(dt);
     // the Still comes out after dark and goes again at dawn
     const still = HZ.find(h => h.kind === 'still');
     if (night && !still.active) { const p = unseenSpot(55, 85); if (p) { horrorOn(still, p); still.moved = 0; still.cool = 0; poseStill(still, 0); } }
     else if (!night && still.active && !seenByPlayer(headOf(still))) horrorOff(still);
     // wailers come back at a new perch a while after they're shot
     for (const h of HZ) if (h.kind === 'wailer' && !h.active && h.respawn !== undefined) { h.respawn -= dt; if (h.respawn <= 0) { const pr = freePerch(true); if (pr) { horrorOn(h, pr.p, { state: 'idle', yaw: pr.yaw }); h.perch = pr; h.cd = 6; } delete h.respawn; } }
-    for (const h of HZ) if (h.active) { if (h.kind === 'crawler') updateCrawler(h, dt); else if (h.kind === 'still') updateStill(h, dt); else updateWailer(h, dt); }
-    // crawlers that wander too far from you slip away
-    for (const h of HZ) if (h.kind === 'crawler' && h.alive && h.state === 'roam' && h.pos.distanceTo(P.pos) > 120) horrorOff(h);
+    for (const h of HZ) if (h.active) { if (h.kind === 'husk') updateHusk(h, dt); else if (h.kind === 'still') updateStill(h, dt); else updateWailer(h, dt); }
+    // husks that wander too far from you lie back down
+    for (const h of HZ) if (h.kind === 'husk' && h.alive && h.state === 'roam' && h.pos.distanceTo(P.pos) > 120) horrorOff(h);
     // radios: hold E to call for help. It takes a while and it's loud.
     const r = nearRadio();
     if (r && P.alive && keys.has('KeyE')) {
@@ -3427,7 +3663,7 @@ const SND = __SOUNDS__;
       const k = clamp((EVAC.hold - EVAC.need + 12) / 12, 0, 1);       // the last twelve seconds: the searchlight sweeps in from above
       EVAC.heli.intensity = k * 6 * (0.85 + Math.sin(simTime * 41) * 0.15); EVAC.heli.position.set(Math.sin(simTime * 0.7) * 6 * (1 - k), 45, Math.cos(simTime * 0.5) * 6 * (1 - k));
       EVAC.heli.target.position.set(P.pos.x - EVAC.p.x, 0, P.pos.z - EVAC.p.z);
-      if (EVAC.hold >= EVAC.need && !HUNT.won && P.alive) { HUNT.won = true; for (const h of HZ) if (h.kind === 'crawler' && h.alive) { h.mem = 0; h.state = 'roam'; } endGame(true); }
+      if (EVAC.hold >= EVAC.need && !HUNT.won && P.alive) { HUNT.won = true; for (const h of HZ) if (h.kind === 'husk' && h.alive) { h.mem = 0; h.state = 'roam'; } endGame(true); }
     }
     updateMarks();
   }
@@ -3437,7 +3673,7 @@ const SND = __SOUNDS__;
     hud.ssub.textContent = fmtT(stats.t) + (HUNT.nights ? ` · night ${HUNT.nights}` : '') + (HUNT.kills ? ` · ${HUNT.kills} down` : '');
   }
   function huntEndText(won, killer) {
-    const how = !killer ? 'The fall finished you' : killer.kind === 'still' ? 'You looked away from the Still' : killer.kind === 'figure' ? 'The figure found you' : 'The crawlers caught you';
+    const how = !killer ? 'The fall finished you' : killer.kind === 'still' ? 'You looked away from the Still' : killer.kind === 'figure' ? 'The figure found you' : 'The dead caught up with you';
     return won ? `The helicopter lifted you out of ${EVAC.name} after ${fmtT(stats.t)}, ${HUNT.nights} night${HUNT.nights === 1 ? '' : 's'} in. You put down ${HUNT.kills} of them.`
       : `${how} at ${clockText()}, with ${HUNT.signals} of 3 calls made. Keep quiet, keep the goggles handy, and don't take your eyes off the tall one.`;
   }
@@ -3445,7 +3681,7 @@ const SND = __SOUNDS__;
   // ================================================================ main loop
   function resize() { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); cam.aspect = vCam.aspect = w / h; cam.updateProjectionMatrix(); vCam.updateProjectionMatrix(); }
   window.addEventListener('resize', resize); resize();
-  let last = performance.now(), fpsAvg = 1 / 60;
+  let last = performance.now(), fpsAvg = 1 / 60, sceneCalls = 0;
   const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qc = new THREE.Quaternion(), eTmp = new THREE.Euler();
   let skipRender = false, dbgNoRender = false;
   function frame(now) {
@@ -3720,13 +3956,13 @@ const SND = __SOUNDS__;
       nvMat.uniforms.uTime.value = simTime + now * 0.001; nvMat.uniforms.uGain.value = lerp(2.2, 13, TOD.dark) * (torchOn ? 0.8 : 1);
       const blind = clamp((0.45 - TOD.dark) / 0.35, 0, 1); nvMat.uniforms.uBlind.value = blind;
       if (blind > 0.5 && !NV.blindTold) { NV.blindTold = true; toast('Too bright for night vision<small>Press N to take the goggles off</small>', 2.5); }
-      renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, cam); renderer.clearDepth();
+      renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, cam); sceneCalls = renderer.info.render.calls; renderer.clearDepth();
       if (P.alive && vmRoot.visible) renderer.render(vScene, vCam);
       renderer.setRenderTarget(null); renderer.clear(); nvMat.uniforms.tDiffuse.value = rt.texture; renderer.render(nvScene, nvCam);
       return;
     }
     renderer.clear();
-    renderer.render(scene, cam);
+    renderer.render(scene, cam); sceneCalls = renderer.info.render.calls;      // for the debug channel
     renderer.clearDepth();
     if (P.alive && vmRoot.visible) renderer.render(vScene, vCam);
   }
@@ -4119,7 +4355,7 @@ const SND = __SOUNDS__;
   $('roomcode').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10); saveNet(); });
   $('newcode').addEventListener('click', () => { $('roomcode').value = Array.from({ length: 5 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[randi(0, 30)]).join(''); saveNet(); });
   function saveNet() { try { localStorage.setItem('lla-net', JSON.stringify({ n: NET.name, c: NET.color, r: $('roomcode').value })); } catch (_) {} }
-  const HUNT_DESC = 'The barricades are down and the avenue runs on into the city. It’s nearly dark, and things live here now: crawlers that hunt by sound, wailers on the rooftops that scream them onto you, a tall pale thing that only moves when you aren’t looking at it, and the figure, still waiting behind your goggles. Find three radios and call for help, then hold out at the evac flare until the helicopter comes. Shooting is loud. So is the radio.';
+  const HUNT_DESC = 'The barricades are down and the avenue runs on into the city. It’s nearly dark, and the dead soldiers in the streets don’t stay down: husks that hunt by sound and still shoot back, wailers on the rooftops that scream them onto you, a tall pale thing that only moves when you aren’t looking at it, and the figure, still waiting behind your goggles. Find three radios and call for help, then hold out at the evac flare until the helicopter comes. Shooting is loud. So is the radio.';
   function setMode(m) {
     if (inRun) return;
     const was = MODE; MODE = m;
@@ -4175,6 +4411,7 @@ const SND = __SOUNDS__;
       if (c === 'audiotest') { audioTest = true; }
       if (c === 'hunt') { setMode('hunt'); if (d.start !== false) { initAudio(); inRun = true; playing = true; setMenu(false); } }
       if (c === 'horror') { const h = HZ.find(x => x.kind === d.kind && (!x.active || x.kind === 'still')); if (h) { cam.getWorldDirection(fwd); const D = d.D || 10, at = new V3(P.pos.x + fwd.x * D, d.y || 0, P.pos.z + fwd.z * D); horrorOn(h, at, { state: d.state || 'roam', yaw: Math.atan2(P.pos.x - at.x, P.pos.z - at.z) }); if (h.kind === 'still') { h.moved = 0; h.cool = 0; poseStill(h, d.pose || 0); } if (d.mem) { h.mem = d.mem; h.last.copy(P.pos); } } }
+      if (c === 'rise') { const c0 = CORPSES.slice().sort((x, y) => x.p.distanceTo(P.pos) - y.p.distanceTo(P.pos))[0]; if (c0) { c0.cool = 0; huskRise(c0, !!d.alert); } }
       if (c === 'radio') { const r = RADIOS[d.i || 0]; if (d.done) { for (const R of RADIOS) R.prog = R.done ? 1 : R.prog; } P.pos.set(r.p.x + 1.2, r.p.y, r.p.z + 1.2); P.yaw = Math.atan2(-(r.p.x - P.pos.x), -(r.p.z - P.pos.z)); }
       if (c === 'figD') { FIG.D = d.D; FIG.active = true; placeFigure(); }
       if (c === 'forget') { try { localStorage.removeItem('lla-best'); localStorage.removeItem('lla-loadout'); } catch (_) {} WAVE.best = 0; Wp.loadout = ['carbine', 'sniper']; renderLoadout(); }
@@ -4215,7 +4452,7 @@ const SND = __SOUNDS__;
         skipRender = false;
         if (d.fire) { for (let k = 0; k < d.fire; k++) if (Wp.mag > 0 && !Wp.reloading) shoot(); }
       }
-      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, hunt: HUNT.on ? { kills: HUNT.kills, signals: HUNT.signals, nights: HUNT.nights, loud: HUNT.loud, evac: EVAC.on ? { p: v(EVAC.p), hold: +EVAC.hold.toFixed(1) } : null, radios: RADIOS.map(r => ({ p: v(r.p), prog: +r.prog.toFixed(2), done: r.done, name: r.name })), hz: HZ.filter(h => h.active).map(h => ({ k: h.kind, st: h.state, alive: h.alive, hp: Math.round(h.hp), p: v(h.pos), d: +h.pos.distanceTo(P.pos).toFixed(1) })), spots: CITY.spots.length, perches: CITY.perches.length, lamps: LAMPS.length } : null, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
+      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, hunt: HUNT.on ? { kills: HUNT.kills, signals: HUNT.signals, nights: HUNT.nights, loud: HUNT.loud, evac: EVAC.on ? { p: v(EVAC.p), hold: +EVAC.hold.toFixed(1) } : null, radios: RADIOS.map(r => ({ p: v(r.p), prog: +r.prog.toFixed(2), done: r.done, name: r.name })), hz: HZ.filter(h => h.active).map(h => ({ k: h.kind, st: h.state, alive: h.alive, hp: Math.round(h.hp), p: v(h.pos), d: +h.pos.distanceTo(P.pos).toFixed(1) })), spots: CITY.spots.length, perches: CITY.perches.length, lamps: LAMPS.length, corpses: CORPSES.length, cps: CORPSES.slice(0, 4).map(c => [...v(c.p), +c.yaw.toFixed(2)]), drops: DROPS.filter(a => a.on).map(a => v(a.g.position)), reserve: Wp.reserve } : null, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), calls: sceneCalls, playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
         P: { pos: v(P.pos), yaw: +P.yaw.toFixed(2), pitch: +P.pitch.toFixed(2), hp: Math.round(P.hp), alive: P.alive }, weapon: Wp.cur, ads: +Wp.ads.toFixed(2), bolt: +Wp.boltT.toFixed(2), fov: +cam.fov.toFixed(1), mag: Wp.mag, reserve: Wp.reserve, reloading: Wp.reloading,
         bots: bots.map(b => ({ n: b.team.name, pos: v(b.pos), hp: b.hp, alive: b.alive, st: b.state, sees: b.sees, aware: +b.aware.toFixed(2), crouch: +b.crouch.toFixed(2), cover: !!b.cover, shots: b.shots })) });
     } catch (err) { reply({ error: String(err && err.stack || err) }); }

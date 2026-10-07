@@ -12,8 +12,9 @@ The whole game ships as **one self-contained HTML file** with every model and so
 - **Deathmatch · online:** free-for-all for up to 8 players on a room code. The match is first to 20 kills or 10 minutes, with respawns. Hold Tab for the scoreboard.
 - **Hunted:** the avenue's barricades come down and its cross streets run on into a grid city about 240 x 260 m (built the first time
   the mode is picked). Find three radios (hold E for 6 s, which is loud), then hold out for 60 s at the evac flare until the helicopter comes.
-  Night falls about 20 s in. The horrors: **crawlers** (eyeless, on all fours, hunt by sound, lunge, climb up after you), **wailers** (crouched on
-  rooftop cornices; if one sees you it screams every crawler within 150 m onto you), **the Still** (a tall mannequin that comes out at night and
+  Night falls about 20 s in. The horrors: **husks** (dead soldiers lying face down in the streets, about 70 of them, that rise as see-through
+  ghosts of themselves: slow, hunt by sound, stop and fire short inaccurate bursts, club you up close, and drop an ammo can when shot; walking
+  past a body may wake it), **wailers** (crouched on rooftop cornices; if one sees you it screams every husk within 150 m onto you), **the Still** (a tall mannequin that comes out at night and
   only moves while you aren't looking; the goggles flipping counts as a blink), and **the figure** (same rules as Survival, but its scare does 35 damage).
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
   It only moves when the goggles come down, and its distance carries over from night to night. Night vision whites out in daylight (`uBlind`), so the goggles
@@ -58,7 +59,8 @@ day/night + lamps + torch + night vision (NV post-process shader `nvMat`) → **
 `updateFigure`) → player viewmodels (`WEAPONS`, `RIGS`, reload keyframes `ARMK`, `animateReload`, shotgun shells, pump, bolt, slide) →
 audio (`sfx`, positional `sfxAt` with HRTF, occlusion, reverb) → state (`P` player, `Wp` weapon) → collision → enemies (`makeBot`, `updateBot` AI)
 → effects → HUD → menu/input/loadout → survival waves → climbing → weapon actions (`shoot`, `reload`) →
-**Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`, `updateCrawler`/`updateStill`/`updateWailer`,
+**Hunted** (`CITY`/`buildCity`, nav grid `NAV`/`navFlow`, horror models and minds `HZ`; husks: `ghostMat` shader, `HUSK_LOOKS`, `buildHusk`,
+`poseHusk`, `updateHusk`, `huskFire`; the bodies `CORPSES`/`placeCorpses`/`huskRise` (instanced); ammo cans `DROPS`; `updateStill`/`updateWailer`,
 radios/`EVAC`, `huntReset`, `updateHunt`) → main loop `step()` →
 **online deathmatch** (`NET`, transports, puppets, hits, match clock) → debug channel.
 
@@ -67,6 +69,9 @@ Conventions:
 - Static scenery goes through `vis()/vbox()/vgeo()`, which batch it into one draw call per material. Colliders go through `solid()/proxy()`.
 - Layers: anything built inside `layerBuild(L, fn)` (batches, colliders, proxies, lamps) belongs to layer `L`, and `setLayer(L, on)` shows or
   removes all of it. `AVE` holds the avenue-only barricades (off in Hunted); `CITY.layer` holds the city (on only in Hunted).
+- Husks share one shader (`ghostMat`, a fresnel rim, rising bands, feet that fade out) but each has its own material instance so it can
+  fade in when it rises and fade out when shot. Their kit is baked into vertex colours, one mesh per joint, and they cast no shadow.
+- Enemy bullets (Survival bots and husks) go through `shotAtPlayer(from, sigma)`.
 - Hunted's horrors path-find with a flow field: `navFlow()` runs a breadth-first search out from the player over a 2 m grid a few times a
   second, and `navDir()` tells a horror which neighbouring cell is closer to you.
 - Player yaw 0 looks down -Z. Bots and puppets face +Z at rotation 0, so a remote player's puppet uses `yaw + PI`.
@@ -88,8 +93,8 @@ Conventions:
 The page listens for `postMessage({dbg:'lla', id, cmd, ...args})` and replies `{dbg:'lla-r', id, r}` with a big state snapshot
 (player, weapon, bots, wave, tod, fig incl. `fig.net`, audio...). Commands: start, reset, set {pos,yaw,pitch,hp,difficulty}, sim {s}
 (advance s seconds at 60 fps without rendering), key {code,ms}, fire {n}, ads, look, ray, weapon, loadout, tune, tod {th}, nv, torch,
-climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {kind,D,state,mem,pose} (bring a crawler,
-wailer or still in D metres ahead), radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
+climb, approach, audiotest, figD {D} (place the figure D metres away), hunt (switch to Hunted and start), horror {kind,D,state,mem,pose} (bring a husk,
+wailer or still in D metres ahead), rise {alert} (wake the body nearest you), radio {i} (stand at radio i), god {on} (take no damage), forget, pause, norender {on}, net {code,name,color},
 aimNet {i,head}, netClock {t}, leaveNet. `test/run.py` and `test/run2.py` wrap this.
 
 Testing tips:
