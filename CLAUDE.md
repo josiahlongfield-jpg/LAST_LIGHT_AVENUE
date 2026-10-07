@@ -11,6 +11,7 @@ The whole game ships as **one self-contained HTML file** with every model and so
 - **Survival:** waves of AI soldiers. A 12-minute day/night cycle takes you from sunset through night (night-vision goggles on N, weapon torch on T). You can climb the fire escapes to the rooftops.
 - **Deathmatch · online:** free-for-all for up to 8 players on a room code. The match is first to 20 kills or 10 minutes, with respawns. Hold Tab for the scoreboard.
 - **The figure:** a horror element at night. It's only visible through the night vision, gets closer every time the goggles go up and down, vanishes if you stare at it or walk toward it, and ends in a jump scare that knocks out the goggles.
+  If you leave the goggles on, it still closes in every 30 to 50 seconds (`FIG.stalkT`). During the scare it is pinned to your view (`pinFigure`).
 
 ## Layout
 ```

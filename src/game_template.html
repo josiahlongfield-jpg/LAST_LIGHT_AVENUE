@@ -226,6 +226,7 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
         <div class="settings">
           <label id="diffrow">Difficulty <span class="seg" id="diff"><button type="button" data-d="0" aria-pressed="false">Recruit</button><button type="button" data-d="1" aria-pressed="true">Regular</button><button type="button" data-d="2" aria-pressed="false">Veteran</button></span><output></output></label>
           <label for="sens">Mouse speed <input type="range" id="sens" min="0.2" max="3" step="0.05" value="1"><output id="sensv">1.00</output></label>
+          <label for="asens" title="Mouse speed while holding right click to aim">ADS speed <input type="range" id="asens" min="0.1" max="3" step="0.05" value="0.55"><output id="asensv">0.55</output></label>
           <label for="vol">Volume <input type="range" id="vol" min="0" max="1" step="0.05" value="0.8"><output id="volv">80%</output></label>
         </div>
       </div>
@@ -1104,7 +1105,8 @@ const SND = __SOUNDS__;
   // ================================================================ the thing you only see through night vision
   // Tall, thin, faceless. It is only ever drawn while the goggles are down. It never moves while you're looking.
   // Every time you flip the goggles up and back down after seeing it, it is closer. When it's close enough, it's right there.
-  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
+  // Leave the goggles on and it moves anyway, every 30 to 50 seconds, so you can't just wait the night out.
+  const FIG = { g: null, m: null, gone: false, stare: 0, stareMax: 6, d0: 0, hdPrev: 0, closing: 0, jaw: 0.06, reach: 0, twT: 2, twY: 0, twP: 0, active: false, D: 72, seen: 0, nvWas: false, cool: 0, stalkT: 40, behindT: 22, heartT: 0, heartRate: 0, events: [], tilt: 0.35, tiltWant: 0.35, scareT: 0, nvLock: 0, glitch: 0 };
   // ================================================================ the figure's body: starved, too tall, too long in the arm, and it smiles
   // Built from tubes and ellipsoids, then merged per moving part. Shading is baked into vertex colours as if lit by the goggles'
   // own IR illuminator (from the viewer), so it reads through the intensifier at any distance, with black sockets and a black mouth.
@@ -1353,7 +1355,7 @@ const SND = __SOUNDS__;
       else if (k === 13) best = p;
     }
     FIG.g.position.copy(best); FIG.tiltWant = rand(-0.45, 0.45); FIG.tilt = FIG.tiltWant;
-    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
+    FIG.gone = false; FIG.stare = 0; FIG.stareMax = rand(4, 7); FIG.stalkT = rand(32, 50); FIG.d0 = FIG.hdPrev = Math.hypot(best.x - P.pos.x, best.z - P.pos.z); FIG.closing = 0;
   }
   // it won't be stared at, and it won't be walked up to. Either way it's simply not there any more, until the next time the goggles come down.
   function vanishFigure(why) {
@@ -1368,10 +1370,18 @@ const SND = __SOUNDS__;
       } });
     }
   }
+  // during the scare it holds on to you: wherever you run or look, its face stays half a metre from yours
+  function pinFigure() {
+    if (FIG.scareT <= 0) return;
+    cam.getWorldDirection(_fv); const up = clamp(_fv.y, -0.5, 0.5); _fv.y = 0;
+    if (_fv.lengthSq() < 1e-6) _fv.set(-Math.sin(P.yaw), 0, -Math.cos(P.yaw));
+    _fv.normalize();
+    FIG.g.position.set(cam.position.x + _fv.x * 0.82, cam.position.y - 2.4 + up * 0.82, cam.position.z + _fv.z * 0.82);   // the hunch puts its face half a metre from yours
+    FIG.g.rotation.y = Math.atan2(-_fv.x, -_fv.z);
+  }
   function scareFigure() {
     // flip the goggles down and it's right in front of you
-    cam.getWorldDirection(_fv); _fv.y = 0; _fv.normalize();
-    FIG.g.position.set(cam.position.x + _fv.x * 0.82, cam.position.y - 2.4, cam.position.z + _fv.z * 0.82);   // the hunch puts its face half a metre from yours
+    FIG.scareT = 0.0001; pinFigure();
     FIG.tilt = FIG.tiltWant = 0.28; FIG.scareT = 0.0001; FIG.twY = FIG.twP = 0; FIG.gone = false;
     sfx('fig_sting', 1.3, 1, 0.06, 0, 0.35);
     Wp.punchP += 0.09; Wp.punchY += rand(-0.06, 0.06); hurtFlash = Math.max(hurtFlash, 0.35);
@@ -1382,17 +1392,28 @@ const SND = __SOUNDS__;
     const h = figHead(); _fv.copy(h).sub(cam.position);
     if (_fv.normalize().dot(dir) > 0.9985) { FIG.tiltWant = -FIG.tilt; FIG.glitch = 0.35; sfx('nv_glitch', 0.5, 1.3, 0, 0, 0); }
   }
+  function figureCloser() {
+    if (FIG.seen <= 0.35) return false;
+    FIG.D *= 0.55; if (FIG.D < 9) scareFigure(); else placeFigure();
+    return true;
+  }
   function updateFigure(dt) {
     const night = TOD.dark > 0.7 && inRun && P.alive && !gameOver;
     FIG.cool = Math.max(0, FIG.cool - dt); FIG.nvLock = Math.max(0, FIG.nvLock - dt); FIG.glitch = Math.max(0, FIG.glitch - dt);
     if (!night) { FIG.active = false; FIG.g.visible = false; FIG.nvWas = NV.on; FIG.heartRate = Math.max(0, FIG.heartRate - dt * 0.3); return; }
     if (!FIG.active && FIG.cool <= 0) { FIG.active = true; FIG.D = 72; FIG.seen = 0; placeFigure(); }
-    // goggles just came down
-    if (NV.on && !FIG.nvWas && FIG.active) {
-      if (FIG.seen > 0.35) { FIG.D *= 0.55; if (FIG.D < 9) scareFigure(); else placeFigure(); }
-      FIG.seen = 0;
-    }
+    // goggles just came down: if you'd seen it, it's closer now
+    if (NV.on && !FIG.nvWas && FIG.active) { figureCloser(); FIG.seen = 0; }
     FIG.nvWas = NV.on;
+    // leave the goggles on and it doesn't wait for you: every so often the tube flickers, and it has moved
+    if (NV.on && FIG.active && FIG.scareT === 0) {
+      FIG.stalkT -= dt;
+      if (FIG.stalkT <= 0) {
+        FIG.glitch = Math.max(FIG.glitch, 0.3); sfx('nv_glitch', 0.4, 1.2, 0, 0, 0);
+        if (!figureCloser()) placeFigure();    // you never noticed it: it steps back into view, no nearer
+        FIG.seen = 0;
+      }
+    }
     // the scare: a second and a half in your face, then the goggles short out and it's gone
     if (FIG.scareT > 0) {
       FIG.scareT += dt;
@@ -1405,7 +1426,7 @@ const SND = __SOUNDS__;
     FIG.g.visible = FIG.active && NV.on && !FIG.gone;
     if (!FIG.g.visible && FIG.active) FIG.hdPrev = Math.hypot(FIG.g.position.x - P.pos.x, FIG.g.position.z - P.pos.z);
     if (FIG.g.visible) {
-      _fv.copy(cam.position).sub(FIG.g.position); FIG.g.rotation.y = Math.atan2(_fv.x, _fv.z);       // always facing you
+      if (FIG.scareT === 0) { _fv.copy(cam.position).sub(FIG.g.position); FIG.g.rotation.y = Math.atan2(_fv.x, _fv.z); }      // always facing you
       FIG.tilt = lerp(FIG.tilt, FIG.tiltWant, damp(FIG.scareT > 0 ? 20 : 1.2, dt));
       // it doesn't walk while you watch. It twitches. And the mouth keeps opening, a little wider every time it's closer.
       const near = clamp(1 - FIG.D / 72, 0, 1), scared = FIG.scareT > 0;
@@ -1727,14 +1748,14 @@ const SND = __SOUNDS__;
 
   // ================================================================ audio
   let actx = null, master = null, bufs = {}, volume = 0.8;
-  const GAIN = { shotfar: 0.8, step: 0.3, tink: 0.16, ping: 0.6, land: 0.45, hit: 0.35, raise: 0.4, lower: 0.35, crack: 0.55, hurt: 0.8, bodyhit: 0.6, magdrop: 0.4,
+  const GAIN = { shotfar: 0.8, step: 0.3, tink: 0.16, ping: 0.6, land: 0.45, hit: 0.5, hit_kill: 0.6, raise: 0.4, lower: 0.35, crack: 0.55, hurt: 0.8, bodyhit: 0.6, magdrop: 0.4,
     shot_c0: 0.62, shot_c1: 0.62, shot_c2: 0.62, far_c: 0.75, shot_s: 0.9, far_s: 0.85, dry_c: 0.55, dry_s: 0.55,
     c_magout: 0.6, c_magin: 0.75, c_magin2: 0.75, c_boltrel: 0.8, s_boltopen: 0.75, s_boltclose: 0.8, s_magout: 0.65, s_magin: 0.7, s_maglock: 0.7, s_reloadclose: 0.75,
     case_c0: 0.22, case_c1: 0.22, case_c2: 0.22, case_s0: 0.3, case_s1: 0.3,
     shot_p: 0.6, far_p: 0.6, dry_p: 0.55, p_magout: 0.55, p_magin: 0.7, p_slide: 0.75, p_slide2: 0.75, case_p0: 0.2, case_p1: 0.2,
     shot_m0: 0.55, shot_m1: 0.55, far_m: 0.65, dry_m: 0.55, m_magout: 0.6, m_magin: 0.72, m_charge: 0.8,
     shot_g: 0.95, far_g: 0.85, dry_g: 0.55, g_pumpback: 0.8, g_pumpfwd: 0.85, g_shell0: 0.6, g_shell1: 0.6, g_shell2: 0.6, g_shell3: 0.6, case_g0: 0.3, case_g1: 0.3, nvg_on: 0.5, nvg_off: 0.45, torch: 0.5,
-    radio0: 0.45, radio1: 0.45, radio2: 0.45, hit: 0.35, raise: 0.4, lower: 0.35, magdrop: 0.5, land_con: 0.5, land_met: 0.55,
+    radio0: 0.45, radio1: 0.45, radio2: 0.45, raise: 0.4, lower: 0.35, magdrop: 0.5, land_con: 0.5, land_met: 0.55,
     st_con0: 0.42, st_con1: 0.42, st_con2: 0.42, st_con3: 0.42, st_con4: 0.42, st_con5: 0.42, st_grav0: 0.3, st_grav1: 0.3, st_grav2: 0.3, st_grav3: 0.3, st_grav4: 0.3, st_grav5: 0.3,
     st_met0: 0.32, st_met1: 0.32, st_met2: 0.32, st_met3: 0.32, st_met4: 0.32, st_wat0: 0.45, st_wat1: 0.45, st_wat2: 0.45, st_wat3: 0.45,
     hurt0: 0.7, hurt1: 0.7, hurt2: 0.7, hurt3: 0.7, flesh0: 0.6, flesh1: 0.6, flesh2: 0.6, flesh3: 0.6, crack0: 0.6, crack1: 0.6, crack2: 0.6,
@@ -1850,7 +1871,7 @@ const SND = __SOUNDS__;
   const W = () => WEAPONS[Wp.cur];
   const stats = { shots: 0, hits: 0, kills: 0, heads: 0, t: 0 };
   const keys = new Set();
-  let sens = 1, playing = false, locked = false, noLock = false, lockWorked = false, gameOver = false, difficulty = 1, simTime = 0;
+  let sens = 1, adsSens = 0.55, playing = false, locked = false, noLock = false, lockWorked = false, gameOver = false, difficulty = 1, simTime = 0;
   const DIFF = [{ acc: 1.5, react: 1.4, dmg: 0.6 }, { acc: 0.8, react: 0.9, dmg: 1.0 }, { acc: 0.55, react: 0.6, dmg: 1.3 }];
 
   // ================================================================ collision (shared by player and enemies)
@@ -2294,7 +2315,7 @@ const SND = __SOUNDS__;
     const h = Math.ceil(P.hp); hud.hp.textContent = h; hud.hbar.style.width = h + '%';
     hud.hbar.style.background = h > 60 ? 'var(--ok)' : h > 30 ? 'var(--amber)' : 'var(--red)';
   }
-  function hitMarker(kill) { hmT = kill ? 0.35 : 0.14; hud.hm.classList.toggle('kill', !!kill); hud.hm.style.opacity = 1; sfx('hit', kill ? 1 : 0.7, kill ? 0.8 : 1, 0, 0, 0); }
+  function hitMarker(kill) { hmT = kill ? 0.35 : 0.14; hud.hm.classList.toggle('kill', !!kill); hud.hm.style.opacity = 1; sfx(kill ? 'hit_kill' : 'hit', 1, rand(0.96, 1.04), 0, 0, 0); }
   function showDamageFrom(pos) { const d = dmgEls[dmgIdx++ % dmgEls.length]; d.t = 1.1; d.from.copy(pos); }
   function feed(html) {
     const el = document.createElement('div'); el.innerHTML = html; hud.feed.prepend(el);
@@ -2338,7 +2359,7 @@ const SND = __SOUNDS__;
   document.addEventListener('pointerlockerror', enableNoLock);
   document.addEventListener('mousemove', e => {
     if (!playing || (!locked && !noLock) || !P.alive) return;
-    const s = 0.0022 * sens * (1 - Wp.ads * 0.45) * Math.min(1, cam.fov / 50);
+    const s = 0.0022 * lerp(sens, adsSens, Wp.ads) * Math.min(1, cam.fov / 50);     // aiming has its own speed; scopes still slow it with the zoom
     P.yaw -= e.movementX * s; P.pitch = clamp(P.pitch - e.movementY * s, -1.45, 1.45);
     Wp.swayX = clamp(Wp.swayX - e.movementX * 0.00004, -0.02, 0.02); Wp.swayY = clamp(Wp.swayY + e.movementY * 0.00004, -0.02, 0.02);
   });
@@ -2372,7 +2393,13 @@ const SND = __SOUNDS__;
     else if (e.code === 'Space' && P.onGround) { P.vel.y = 6.0; P.onGround = false; sfx(stepName(surfaceAt(P.pos)), 0.7, 1.08); }
   });
   window.addEventListener('keyup', e => keys.delete(e.code));
-  $('sens').addEventListener('input', e => { sens = parseFloat(e.target.value); $('sensv').textContent = sens.toFixed(2); });
+  function setSens(hip, ads) {
+    sens = hip; adsSens = ads; $('sens').value = hip; $('asens').value = ads; $('sensv').textContent = hip.toFixed(2); $('asensv').textContent = ads.toFixed(2);
+    try { localStorage.setItem('lla-sens', JSON.stringify([hip, ads])); } catch (_) {}
+  }
+  try { const v = JSON.parse(localStorage.getItem('lla-sens') || 'null'); if (Array.isArray(v) && v.length === 2 && v.every(x => x >= 0.1 && x <= 3)) setSens(v[0], v[1]); } catch (_) {}
+  $('sens').addEventListener('input', e => setSens(parseFloat(e.target.value), adsSens));
+  $('asens').addEventListener('input', e => setSens(sens, parseFloat(e.target.value)));
   $('vol').addEventListener('input', e => { volume = parseFloat(e.target.value); $('volv').textContent = Math.round(volume * 100) + '%'; if (master) master.gain.value = volume; });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && playing && !gameOver) { playing = false; keys.clear(); Wp.trigger = false; Wp.adsHeld = false; showBrief(true); setMenu(true, 'Click to resume'); }
@@ -2782,6 +2809,7 @@ const SND = __SOUNDS__;
     const Wc = W(), scoped = Wc.scope ? clamp((Wp.ads - 0.85) / 0.12, 0, 1) : 0;
     const sway = scoped * (Wp.breathHeld ? 0.12 : 1) * 0.0045;
     cam.rotation.set(P.pitch + Wp.punchP + Math.sin(simTime * 1.3) * sway, P.yaw + Wp.punchY + Math.sin(simTime * 0.9 + 1) * sway * 1.3, P.alive ? 0 : 0.35);
+    pinFigure();
     cam.fov = Wc.scope ? lerp(lerp(75, 80, Wp.sprint), lerp(55, Wc.fov, scoped), Wp.ads) : lerp(lerp(75, 80, Wp.sprint), Wc.fov, Wp.ads); cam.updateProjectionMatrix();
     vCam.fov = lerp(58, Wc.vfov, Wp.ads); vCam.updateProjectionMatrix();
     sky.position.copy(cam.position);
@@ -3381,7 +3409,7 @@ const SND = __SOUNDS__;
         skipRender = false;
         if (d.fire) { for (let k = 0; k < d.fire; k++) if (Wp.mag > 0 && !Wp.reloading) shoot(); }
       }
-      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
+      reply({ fig: { active: FIG.active, vis: FIG.g.visible, D: +FIG.D.toFixed(1), seen: +FIG.seen.toFixed(2), scare: FIG.scareT > 0, dbgV: FIG.dbgV, lock: +FIG.nvLock.toFixed(1), net: NET.on ? { status: NET.status, kind: NET.kind, me: NET.myPeer, host: NET.host, k: NET.k, d: NET.d, epoch: NET.epoch, inv: +NET.invuln.toFixed(1), h: NET.h, hp: Math.round(P.hp), M: NET.host ? NET.M : NET.lastM, remotes: [...NET.remotes.values()].map(r => ({ n: r.name, k: r.k, d: r.d, al: r.alive, pos: v(r.pos), w: r.weapon })) } : null, pos: v(FIG.g.position), gone: FIG.gone, stalk: +FIG.stalkT.toFixed(1), cam: v(cam.position), camDir: v(cam.getWorldDirection(new V3())), stare: +FIG.stare.toFixed(2), closing: +FIG.closing.toFixed(2) }, audio: actx ? { state: actx.state, bufs: Object.keys(bufs).length, total: Object.keys(SND).length, test: audioTest } : null, wave: { n: WAVE.n, phase: WAVE.phase, t: +WAVE.t.toFixed(1) }, tod: { th: +TOD.th.toFixed(2), dark: +TOD.dark.toFixed(2), clock: clockText() }, nv: NV.on, torch: torchOn, climb: !!P.climb, ladders: LADDERS.map(l => [+l.px.toFixed(2), +l.z.toFixed(2), +l.roofY.toFixed(1)]), vm: { p: v(vmRoot.position), r: v(new THREE.Euler().setFromQuaternion(vmRoot.quaternion)), arm: v(RIGS[Wp.cur].armPivot.position), body: v(RIGS[Wp.cur].body.rotation), flip: v(RIGS[Wp.cur].flip.rotation) }, snd: actx ? { state: actx.state, n: Object.keys(bufs).length, missing: Object.keys(SND).filter(k => !bufs[k]) } : null, fps: Math.round(1 / fpsAvg), playing, gameOver, t: +stats.t.toFixed(1), stats: Object.assign({}, stats),
         P: { pos: v(P.pos), yaw: +P.yaw.toFixed(2), pitch: +P.pitch.toFixed(2), hp: Math.round(P.hp), alive: P.alive }, weapon: Wp.cur, ads: +Wp.ads.toFixed(2), bolt: +Wp.boltT.toFixed(2), fov: +cam.fov.toFixed(1), mag: Wp.mag, reserve: Wp.reserve, reloading: Wp.reloading,
         bots: bots.map(b => ({ n: b.team.name, pos: v(b.pos), hp: b.hp, alive: b.alive, st: b.state, sees: b.sees, aware: +b.aware.toFixed(2), crouch: +b.crouch.toFixed(2), cover: !!b.cover, shots: b.shots })) });
     } catch (err) { reply({ error: String(err && err.stack || err) }); }

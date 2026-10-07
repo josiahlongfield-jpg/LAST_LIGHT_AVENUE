@@ -69,7 +69,18 @@ S["land_met"] = norm(at(fades(rate(load("walk_metal_1"), 0.82)), 0, 0.6) + 0.35 
 # ---------------------------------------------------------------- hits, voices, UI
 for i in range(4): S[f"hurt{i}"] = norm(fades(load(f"hurt_m_{i + 1}")), 0.85)                        # micahlg
 for i, k in enumerate((2, 3, 4, 5)): S[f"flesh{i}"] = norm(around_peak(load(f"unarmed_hit_flesh_{k}"), 0.01, 0.2), 0.85)
-S["hit"] = norm(fades(hp(load("re_interface_press"), 900)), 0.7)
+# hit marker: a padded body thud instead of a high "tink", and a heavier double thump for a kill (flesh hits by freesound user 7146007)
+def thump(f0, f1, dur, tau):
+    t = np.arange(int(dur * SR)) / SR; f = f1 + (f0 - f1) * np.exp(-t / 0.025)
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / tau) * (1 - np.exp(-t / 0.0015))
+def gate(x, keep, tau):
+    t = np.arange(len(x)) / SR; return x * np.where(t < keep, 1, np.exp(-(t - keep) / tau))
+pad = lp(hp(gate(around_peak(load("unarmed_hit_flesh_5"), 0.004, 0.12), 0.012, 0.025), 180), 2800)   # the punchy mids of a body blow, no top end
+S["hit"] = norm(fades(at(norm(pad), 0, 0.14) + at(thump(230, 130, 0.14, 0.025), 0, 0.14) * 0.3, 0.0005, 0.03), 0.8)
+pad2 = lp(hp(gate(around_peak(load("unarmed_hit_flesh_3"), 0.004, 0.18), 0.02, 0.04), 160), 2400)
+pad3 = lp(hp(gate(around_peak(load("unarmed_hit_flesh_4"), 0.004, 0.18), 0.02, 0.04), 160), 2400)
+S["hit_kill"] = norm(fades(at(norm(rate(pad2, 0.85)), 0, 0.32) + at(thump(180, 90, 0.22, 0.05), 0, 0.32) * 0.35
+                         + at(norm(rate(pad3, 0.8)), 0.075, 0.32) * 0.7 + at(thump(160, 80, 0.2, 0.04), 0.075, 0.32) * 0.25, 0.0005, 0.05), 0.85)
 # ---------------------------------------------------------------- bullets: supersonic crack from the real 5.56 recordings' leading edge, plus air
 wind = load("re_ambience_wind")
 for i in range(3):
